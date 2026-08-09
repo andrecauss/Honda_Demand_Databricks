@@ -19,17 +19,24 @@
 # ARQUITETURA:
 #   ┌─────────────────────────────────────────────────────────────────────┐
 #   │ INPUT: parts_hdbk_sandbox.pr_demand (schema)                        │
-#   │   • refined_demand_fechada_novos_modelos                            │
-#   │   • refined_demand_aberta                                           │
-#   │   • refined_demand_linha                                            │
-#   │   • refined_demand_mi, refined_demand_me                            │
-#   │   • refined_demand_zpug, refined_demand_zpug_cliente                │
-#   │   • refined_demand_distribuicao                                     │
+#   │   • refined_demand_fechada_{SEGMENTO}_{CENTRO}                      │
+#   │   • refined_demand_fechada_novos_modelos_{SEGMENTO}_{CENTRO}       │
+#   │   • refined_demand_aberta_{SEGMENTO}_{CENTRO}                       │
+#   │   • refined_demand_linha_{SEGMENTO}_{CENTRO}                        │
+#   │   • refined_demand_mi_{SEGMENTO}_{CENTRO}                           │
+#   │   • refined_demand_me_{SEGMENTO}_TTL                                │
+#   │   • refined_demand_zpug_{SEGMENTO}_TTL                              │
+#   │   • refined_demand_zpug_cliente_{SEGMENTO}_TTL                      │
+#   │   • refined_demand_distribuicao_{SEGMENTO}_TTL                      │
+#   │   Onde SEGMENTO ∈ {HDA, HAB} e CENTRO ∈ {TTL, 0203, 0209, 0232,    │
+#   │   0503, 0505}                                                        │
 #   └────────────────────────┬────────────────────────────────────────────┘
 #                            │
 #                            v
 #   ┌─────────────────────────────────────────────────────────────────────┐
 #   │ TRANSFORMAÇÃO:                                                      │
+#   │   • Descoberta dinâmica de tabelas (SHOW TABLES)                    │
+#   │   • Filtragem de tabelas refinadas (refined_demand_*)                │
 #   │   • Conversão Spark DataFrame → Pandas DataFrame                    │
 #   │   • Detecção de colunas 'file' e 'sheet' para organização           │
 #   │   • Criação de workbooks Excel com múltiplas abas quando aplicável  │
@@ -43,9 +50,10 @@
 #   └─────────────────────────────────────────────────────────────────────┘
 #
 # DIMENSÕES DE ANÁLISE:
+#   • Segmento: HDA (2W Motos) vs HAB (4W Automóveis)
+#   • Centros HDA: TTL, 0203 (Sumaré), 0209 (Jaboatão), 0232 (Manaus)
+#   • Centros HAB: TTL, 0503 (Sumaré), 0505 (Jaboatão)
 #   • Mercado: MI (Mercado Interno) vs ME (Mercado Externo)
-#   • Segmento: HDA (Honda Automóveis) vs HAB (Honda Motos)
-#   • Centros: 0203, 0209, 0232 (HDA) e 0503, 0505 (HAB)
 #   • Tipo de Demanda: Fechada, Aberta, Linha, ZPUG
 #   • Granularidade: Item Principal Cadeia (família de produtos)
 #
@@ -55,6 +63,8 @@
 #   • Tabelas simples: um workbook com uma única aba
 #   • Nomes de arquivos: padrão "{SEGMENTO} {ANO} {MÊS} {TIPO}.xlsx"
 #   • Limite de 31 caracteres para nomes de abas Excel
+#   • Exportação dinâmica: processa automaticamente todas as tabelas
+#     refinadas existentes no schema (36 tabelas)
 #
 # DEPENDÊNCIAS:
 #   • openpyxl: leitura/escrita de arquivos .xlsx
@@ -81,12 +91,16 @@ print("✓ Pronto para processar.")
 # Descoberta de Tabelas do Schema
 # ------------------------------------------------------------------------------
 # Lista todas as tabelas disponíveis no schema pr_demand para exportação.
-# Usado posteriormente para relatório de resumo e validação.
+# Filtra apenas tabelas que começam com 'refined_demand_'.
 # ------------------------------------------------------------------------------
 tables = spark.sql("SHOW TABLES IN parts_hdbk_sandbox.pr_demand").collect()
-table_names = [row.tableName for row in tables]
+table_names = [
+    row.tableName for row in tables 
+    if row.tableName.startswith("refined_demand_")
+]
 
-print(f"Total de tabelas encontradas: {len(table_names)}")
+print(f"Total de tabelas refinadas encontradas: {len(table_names)}")
+print(f"Tabelas: {sorted(table_names)}")
 
 # COMMAND ----------
 
@@ -250,169 +264,44 @@ except Exception as e:
 
 # COMMAND ----------
 
-# DBTITLE 1,Bloco: Demandas Gerais
-# ===========================================================================
-# BLOCO 1: DEMANDAS FECHADAS - NOVOS MODELOS
-# ===========================================================================
-# Exporta tabelas de demanda fechada para novos modelos
-# ===========================================================================
-
-print("\n" + "="*70)
-print("BLOCO 1: DEMANDAS FECHADAS - NOVOS MODELOS")
-print("="*70)
-
-# COMMAND ----------
-
-# DBTITLE 1,Exportar Demanda Fechada
-# ------------------------------------------------------------------------------
-# Exporta Demanda Fechada - Novos Modelos
-# ------------------------------------------------------------------------------
-# Tabela: refined_demand_fechada_novos_modelos
-# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
-# ------------------------------------------------------------------------------
-export_table_to_excel("refined_demand_fechada_novos_modelos")
-
-# COMMAND ----------
-
-# DBTITLE 1,Bloco: Demandas Gerais
-# ===========================================================================
-# BLOCO 2: DEMANDAS GERAIS
-# ===========================================================================
-# Exporta tabelas de demanda aberta e linha (contagem de SKUs)
-# ===========================================================================
-
-print("\n" + "="*70)
-print("BLOCO 2: DEMANDAS GERAIS")
-print("="*70)
-
-# COMMAND ----------
-
-# DBTITLE 1,Exportar Demanda Aberta
-# ------------------------------------------------------------------------------
-# Exporta Demanda Aberta
-# ------------------------------------------------------------------------------
-# Tabela: refined_demand_aberta
-# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
-# ------------------------------------------------------------------------------
-export_table_to_excel("refined_demand_aberta")
-
-# COMMAND ----------
-
-# DBTITLE 1,Exportar Demanda Linha
-# ------------------------------------------------------------------------------
-# Exporta Demanda Linha
-# ------------------------------------------------------------------------------
-# Tabela: refined_demand_linha
-# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
-# ------------------------------------------------------------------------------
-export_table_to_excel("refined_demand_linha")
-
-# COMMAND ----------
-
-# DBTITLE 1,Bloco: Demandas por Mercado
-# ===========================================================================
-# BLOCO 3: DEMANDAS POR MERCADO
-# ===========================================================================
-# Exporta tabelas segmentadas por Mercado Interno (MI) e Mercado Externo (ME)
-# ===========================================================================
-
-print("\n" + "="*70)
-print("BLOCO 3: DEMANDAS POR MERCADO")
-print("="*70)
-
-# COMMAND ----------
-
-# DBTITLE 1,Exportar Demanda MI
-# ------------------------------------------------------------------------------
-# Exporta Demanda MI
-# ------------------------------------------------------------------------------
-# Tabela: refined_demand_mi
-# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
-# ------------------------------------------------------------------------------
-export_table_to_excel("refined_demand_mi")
-
-# COMMAND ----------
-
-# DBTITLE 1,Exportar Demanda ME
-# ------------------------------------------------------------------------------
-# Exporta Demanda ME
-# ------------------------------------------------------------------------------
-# Tabela: refined_demand_me
-# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
-# ------------------------------------------------------------------------------
-export_table_to_excel("refined_demand_me")
-
-# COMMAND ----------
-
-# DBTITLE 1,Bloco: Pedidos ZPUG
-# ===========================================================================
-# BLOCO 4: PEDIDOS ZPUG
-# ===========================================================================
-# Exporta pedidos do tipo ZPUG (tipo_ov = 'ZPUG'), agregados e por cliente
-# ===========================================================================
-
-print("\n" + "="*70)
-print("BLOCO 4: PEDIDOS ZPUG")
-print("="*70)
-
-# COMMAND ----------
-
-# DBTITLE 1,Exportar Pedidos ZPUG
-# ------------------------------------------------------------------------------
-# Exporta Pedidos ZPUG Agregados
-# ------------------------------------------------------------------------------
-# Tabela: refined_demand_zpug
-# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
-# ------------------------------------------------------------------------------
-export_table_to_excel("refined_demand_zpug")
-
-# COMMAND ----------
-
-# DBTITLE 1,Exportar Pedidos ZPUG por Cliente
-# ------------------------------------------------------------------------------
-# Exporta Pedidos ZPUG por Cliente
-# ------------------------------------------------------------------------------
-# Tabela: refined_demand_zpug_cliente
-# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
-# ------------------------------------------------------------------------------
-export_table_to_excel("refined_demand_zpug_cliente")
-
-# COMMAND ----------
-
-# DBTITLE 1,Bloco: Distribuição
-# ===========================================================================
-# BLOCO 5: DISTRIBUICAO POR CENTRO E MERCADO
-# ===========================================================================
-# Exporta tabela de distribuicao unificada HDA + HAB com percentuais por
-# centro e mercado
-# ===========================================================================
-
-print("\n" + "="*70)
-print("BLOCO 5: DISTRIBUICAO POR CENTRO E MERCADO")
-print("="*70)
-
-# COMMAND ----------
-
-# DBTITLE 1,Exportar Distribuição
-# ------------------------------------------------------------------------------
-# Exporta Distribuição
-# ------------------------------------------------------------------------------
-# Tabela: refined_demand_distribuicao
-# Estrutura: Arquivo Excel sem colunas 'file'/'sheet' (tabela simples)
-# ------------------------------------------------------------------------------
-export_table_to_excel("refined_demand_distribuicao")
-
-# COMMAND ----------
-
-# DBTITLE 1,Resumo da Exportação
+# DBTITLE 1,Exportação Dinâmica de Todas as Tabelas Refinadas
 # ==============================================================================
-# RESUMO DA EXPORTAÇÃO
+# EXPORTAÇÃO DINÂMICA DE TODAS AS TABELAS REFINADAS
 # ==============================================================================
-# Exibe estatísticas finais e confirmação de conclusão bem-sucedida.
+# Itera sobre todas as tabelas descobertas no schema e exporta cada uma para
+# formato Excel usando a função export_table_to_excel.
 # ==============================================================================
+
 print("\n" + "="*70)
-print("✅ EXPORTAÇÃO CONCLUÍDA COM SUCESSO!")
+print("EXPORTANDO TODAS AS TABELAS REFINADAS")
 print("="*70)
+
+# Contadores para estatísticas finais
+tabelas_exportadas = 0
+tabelas_com_erro = 0
+erros = []
+
+for table_name in sorted(table_names):
+    try:
+        print(f"\n[EXPORTANDO] {table_name}...")
+        export_table_to_excel(table_name)
+        tabelas_exportadas += 1
+    except Exception as e:
+        tabelas_com_erro += 1
+        erro_msg = f"{table_name}: {str(e)}"
+        erros.append(erro_msg)
+        print(f"[ERRO] {erro_msg}")
+
+print("\n" + "="*70)
+print("RESUMO DA EXPORTAÇÃO")
+print("="*70)
+print(f"✓ Tabelas exportadas com sucesso: {tabelas_exportadas}")
+if tabelas_com_erro > 0:
+    print(f"✗ Tabelas com erro: {tabelas_com_erro}")
+    print("\nDetalhes dos erros:")
+    for erro in erros:
+        print(f"  - {erro}")
+else:
+    print("✓ Nenhum erro detectado")
 print(f"\n📁 Local: {VOLUME_PATH}")
-print(f"📊 Total de tabelas exportadas: {len(table_names)}")
 print("\nℹ️  Os arquivos Excel estão prontos para compartilhamento.")
