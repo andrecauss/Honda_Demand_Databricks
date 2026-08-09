@@ -3,6 +3,44 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+# DBTITLE 1,Cálculo de Parâmetros Automáticos
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+# ---------------------------------------------------------------------------
+# Parâmetros globais (calculados automaticamente)
+# ---------------------------------------------------------------------------
+# Busca a data mais recente das ordens de venda
+data_max_df = spark.table("parts_hdbk_sandbox.dt_sales_orders.raw_sales_order").agg({"data": "max"})
+data_max_row = data_max_df.collect()[0]
+data_max = data_max_row[0]  # Data mais recente
+
+# Define ano e mês de referência com base na data mais recente
+if data_max:
+    # Converte para datetime se necessário
+    if isinstance(data_max, str):
+        data_referencia = datetime.strptime(data_max, "%Y-%m-%d")
+    else:
+        data_referencia = data_max
+    
+    ano = data_referencia.year
+    mes = data_referencia.month
+    
+    # Calcula data_minima: 48 meses (4 anos) antes da data de referência
+    data_minima_dt = data_referencia - relativedelta(months=48)
+    data_minima = data_minima_dt.strftime("%Y-%m-%d")
+    
+    # Define como configuração do Spark para uso em células SQL
+    spark.conf.set("data_minima", data_minima)
+    
+    print(f"📅 Data de referência (mais recente): {data_referencia.strftime('%Y-%m-%d')}")
+    print(f"📅 Ano: {ano}, Mês: {mes}")
+    print(f"📅 Data mínima (48 meses atrás): {data_minima}")
+else:
+    raise ValueError("Não foi possível determinar a data mais recente das ordens de venda")
+
+# COMMAND ----------
+
 # DBTITLE 1,Sales Orders com Cadeia e Centro Original
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE TEMP VIEW vw_sales_orders AS
@@ -32,24 +70,13 @@
 # MAGIC   AND rso.setor_ativ = k.sa
 # MAGIC LEFT JOIN parts_hdbk_sandbox.dm_customers.kna1_sap kna
 # MAGIC   ON rso.emissor_da_ordem = kna.cliente
-# MAGIC WHERE rso.data >= '${data_minima}'
+# MAGIC WHERE rso.data >= '${spark.conf.data_minima}'
 
 # COMMAND ----------
 
-# DBTITLE 1,Função gerar_layout_pivotado
+# DBTITLE 1,Funções Auxiliares
 from pyspark.sql.functions import date_format, lit
 from functools import reduce
-
-# ---------------------------------------------------------------------------
-# Parâmetros globais (widgets)
-# ---------------------------------------------------------------------------
-dbutils.widgets.text("data_minima", "2025-01-01", "1 Data Mínima")
-dbutils.widgets.text("ano", "2026", "2 Ano Referência")
-dbutils.widgets.text("mes", "7", "3 Mês Referência")
-
-data_minima = dbutils.widgets.get("data_minima")
-mes = int(dbutils.widgets.get("mes"))
-ano = int(dbutils.widgets.get("ano"))
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -77,13 +104,20 @@ def _nome_arquivo(org_vendas, sufixo):
 
 
 def _pivot(df_filtrado, colunas_grupo, operacao="soma"):
-    """Aplica pivot por data (yyyy/MM) com soma ou contagem."""
+    """Aplica pivot por data (yyyy/MM) com soma ou contagem. Converte quantidades em INT."""
     df_fmt = df_filtrado.withColumn("data_aaaa_mm", date_format("data", "yyyy/MM"))
     if operacao == "soma":
         df_pivot = df_fmt.groupBy(colunas_grupo).pivot("data_aaaa_mm").agg({"quantidade": "sum"})
     else:
         df_pivot = df_fmt.groupBy(colunas_grupo).pivot("data_aaaa_mm").agg({"quantidade": "count"})
-    return df_pivot.fillna(0)
+    
+    # Converte todas as colunas de data (yyyy/MM) para INT
+    df_pivot = df_pivot.fillna(0)
+    for col_name in df_pivot.columns:
+        if col_name not in colunas_grupo:
+            df_pivot = df_pivot.withColumn(col_name, df_pivot[col_name].cast("int"))
+    
+    return df_pivot
 
 
 TABELAS = [
@@ -159,6 +193,21 @@ _limpar_tabelas()
 
 # DBTITLE 1,HDA Demanda Fechada
 # [2W HDA] Demanda Fechada: soma por item_principal_cadeia, todas as abas 2W
+org_vendas = "0200"  # 2W Motos
+arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
+
+df_base = df.filter((df.data >= data_minima) & (df.org_vendas == org_vendas))
+
+resultado = _union_abas(df_base, ABAS_2W, arquivo, ["item_principal_cadeia"])
+resultado = resultado.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
+resultado = _reordenar(resultado, ["Item Principal Cadeia"])
+
+_append(resultado, "refined_demand_fechada")
+
+# COMMAND ----------
+
+# DBTITLE 1,HDA Demanda Fechada Novos Modelos
+# [2W HDA] Demanda Fechada Novos Modelos: soma por item_principal_cadeia, todas as abas 2W mas sem ZESP
 org_vendas = "0200"  # 2W Motos
 arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
 
@@ -283,9 +332,24 @@ _append(resultado, "refined_demand_zpug_cliente")
 org_vendas = "0500"  # 4W Autos
 arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
 
-df_base = df.filter((df.data >= data_minima) & (df.org_vendas == org_vendas) & (df.tipo_ov != "ZESP"))
+df_base = df.filter((df.data >= data_minima) & (df.org_vendas == org_vendas))
 
 resultado = _union_abas(df_base, ABAS_4W, arquivo, ["item_principal_cadeia"])
+resultado = resultado.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
+resultado = _reordenar(resultado, ["Item Principal Cadeia"])
+
+_append(resultado, "refined_demand_fechada")
+
+# COMMAND ----------
+
+# DBTITLE 1,HAB Demanda Fechada Novos Modelos
+# [4W HAB] Demanda Fechada para Novos Modelos: soma por item_principal_cadeia, todas as abas 4W, sem ZESP
+org_vendas = "0500"  # 4W Autos
+arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
+
+df_base = df.filter((df.data >= data_minima) & (df.org_vendas == org_vendas) & (df.tipo_ov != "ZESP"))
+
+resultado = _union_abas(df_base, ["TTL"], arquivo, ["item_principal_cadeia"])
 resultado = resultado.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
 resultado = _reordenar(resultado, ["Item Principal Cadeia"])
 
@@ -332,7 +396,7 @@ df_base = df.filter(
     (df.data >= data_minima) & (df.org_vendas == org_vendas) & (df.canal_dist == "01")
 )
 
-resultado = _union_abas(df_base, ABAS_4W, arquivo, ["item_principal_cadeia"])
+resultado = _union_abas(df_base, ["TTL"], arquivo, ["item_principal_cadeia"])
 resultado = resultado.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
 resultado = _reordenar(resultado, ["Item Principal Cadeia"])
 
@@ -422,6 +486,11 @@ def _calc_centro(df_seg, periodo_inicio, periodo_fim):
         .fillna(0)
     )
     cols = sorted([c for c in df_pivot.columns if c != "item_principal_cadeia"])
+    
+    # Converte colunas de quantidade para INT antes de calcular percentuais
+    for c in cols:
+        df_pivot = df_pivot.withColumn(c, col(c).cast("int"))
+    
     total = reduce(add, [col(c) for c in cols])
     df_pivot = df_pivot.withColumn("_total", total)
     for c in cols:
@@ -447,6 +516,11 @@ def _calc_mercado(df_seg, periodo_inicio, periodo_fim):
         if old_name in df_pivot.columns:
             df_pivot = df_pivot.withColumnRenamed(old_name, new_name)
     cols = sorted([c for c in df_pivot.columns if c != "item_principal_cadeia"])
+    
+    # Converte colunas de quantidade para INT antes de calcular percentuais
+    for c in cols:
+        df_pivot = df_pivot.withColumn(c, col(c).cast("int"))
+    
     total = reduce(add, [col(c) for c in cols])
     df_pivot = df_pivot.withColumn("_total", total)
     for c in cols:
