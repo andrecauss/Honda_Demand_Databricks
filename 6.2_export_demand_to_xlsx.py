@@ -8,65 +8,117 @@
 # ]
 # ///
 # DBTITLE 1,Export Demand Tables to CSV
-# MAGIC %md
-# MAGIC # Exportação de Tabelas de Demanda para Excel
-# MAGIC
-# MAGIC **Camada**: Export  
-# MAGIC **Objetivo**: Exportar todas as tabelas refinadas de demanda do schema `pr_demand` como arquivos Excel (XLSX) para o volume de exportação.
-# MAGIC
-# MAGIC ## Tabelas Exportadas
-# MAGIC
-# MAGIC * Demandas Fechadas: Novos Modelos
-# MAGIC * Demandas Gerais: Aberta e Linha (contagem de SKUs)
-# MAGIC * Demandas por Mercado: MI (Mercado Interno) e ME (Mercado Externo)
-# MAGIC * Pedidos ZPUG: Agregados e por Cliente
-# MAGIC * Distribuição: HDA + HAB por Centro e Mercado
-# MAGIC
-# MAGIC ## Lógica de Exportação
-# MAGIC
-# MAGIC * Tabelas com colunas `file`/`sheet`: uma aba por sheet, agrupadas por file
-# MAGIC * Tabelas sem essas colunas: um arquivo Excel simples por tabela
-# MAGIC
-# MAGIC ## Configuração
-# MAGIC
-# MAGIC **Schema Fonte**: `parts_hdbk_sandbox.pr_demand`  
-# MAGIC **Volume Destino**: `/Volumes/parts_hdbk_sandbox/pr_demand/demand_refined_exportfiles`
+# ==============================================================================
+# NOTEBOOK: 6.2 - Exportação de Demandas para Excel
+# ==============================================================================
+#
+# PROPÓSITO:
+#   Exportar todas as tabelas refinadas do schema parts_hdbk_sandbox.pr_demand
+#   como arquivos Excel (.xlsx) para o volume Unity Catalog de exportação.
+#
+# ARQUITETURA:
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │ INPUT: parts_hdbk_sandbox.pr_demand (schema)                        │
+#   │   • refined_demand_fechada_novos_modelos                            │
+#   │   • refined_demand_aberta                                           │
+#   │   • refined_demand_linha                                            │
+#   │   • refined_demand_mi, refined_demand_me                            │
+#   │   • refined_demand_zpug, refined_demand_zpug_cliente                │
+#   │   • refined_demand_distribuicao                                     │
+#   └────────────────────────┬────────────────────────────────────────────┘
+#                            │
+#                            v
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │ TRANSFORMAÇÃO:                                                      │
+#   │   • Conversão Spark DataFrame → Pandas DataFrame                    │
+#   │   • Detecção de colunas 'file' e 'sheet' para organização           │
+#   │   • Criação de workbooks Excel com múltiplas abas quando aplicável  │
+#   │   • Limpeza de colunas de controle (file/sheet) antes da exportação │
+#   └────────────────────────┬────────────────────────────────────────────┘
+#                            │
+#                            v
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │ OUTPUT: /Volumes/parts_hdbk_sandbox/pr_demand/                      │
+#   │         demand_refined_exportfiles/*.xlsx                           │
+#   └─────────────────────────────────────────────────────────────────────┘
+#
+# DIMENSÕES DE ANÁLISE:
+#   • Mercado: MI (Mercado Interno) vs ME (Mercado Externo)
+#   • Segmento: HDA (Honda Automóveis) vs HAB (Honda Motos)
+#   • Centros: 0203, 0209, 0232 (HDA) e 0503, 0505 (HAB)
+#   • Tipo de Demanda: Fechada, Aberta, Linha, ZPUG
+#   • Granularidade: Item Principal Cadeia (família de produtos)
+#
+# CONVENÇÕES:
+#   • Tabelas com colunas 'file'/'sheet': um workbook por 'file', uma aba
+#     por 'sheet'
+#   • Tabelas simples: um workbook com uma única aba
+#   • Nomes de arquivos: padrão "{SEGMENTO} {ANO} {MÊS} {TIPO}.xlsx"
+#   • Limite de 31 caracteres para nomes de abas Excel
+#
+# DEPENDÊNCIAS:
+#   • openpyxl: leitura/escrita de arquivos .xlsx
+#   • xlsxwriter: engine otimizado para pandas.to_excel()
+#   • pandas: manipulação de dados tabulares
+#
+# EXECUÇÃO:
+#   1. Execute todas as células sequencialmente (Run All)
+#   2. Volume de destino será limpo antes da exportação
+#   3. Arquivos .xlsx serão criados no volume especificado
+#   4. Verificar logs de sucesso/erro ao final
+#
+# AUTOR: Andre Causs - Honda Peças - Planejamento
+# ÚLTIMA ATUALIZAÇÃO: 2026-08-09
+# ==============================================================================
+
+print("📊 Notebook 6.2 - Exportação de Demandas para Excel carregado.")
+print("✓ Pronto para processar.")
 
 # COMMAND ----------
 
 # DBTITLE 1,List tables in schema
-# ---------------------------------------------------------------------------
-# Lista todas as tabelas do schema de demanda para exportação
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Descoberta de Tabelas do Schema
+# ------------------------------------------------------------------------------
+# Lista todas as tabelas disponíveis no schema pr_demand para exportação.
+# Usado posteriormente para relatório de resumo e validação.
+# ------------------------------------------------------------------------------
 tables = spark.sql("SHOW TABLES IN parts_hdbk_sandbox.pr_demand").collect()
 table_names = [row.tableName for row in tables]
 
-# Tabelas listadas
+print(f"Total de tabelas encontradas: {len(table_names)}")
 
 # COMMAND ----------
 
 # DBTITLE 1,Install openpyxl library
-# ---------------------------------------------------------------------------
-# Instala bibliotecas necessárias para exportação em formato Excel
-# - openpyxl: Leitura/escrita de arquivos .xlsx
-# - xlsxwriter: Engine otimizado para pandas.to_excel()
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Instalação de Dependências
+# ------------------------------------------------------------------------------
+# Instala bibliotecas necessárias para manipulação de arquivos Excel:
+# - openpyxl: Leitura e escrita de arquivos .xlsx (formato Office Open XML)
+# - xlsxwriter: Engine otimizado para pandas.to_excel() com melhor performance
+#   e suporte a formatação avançada
+# ------------------------------------------------------------------------------
 %pip install openpyxl xlsxwriter
 
 # COMMAND ----------
 
 # DBTITLE 1,Funções Auxiliares de Exportação
-# ---------------------------------------------------------------------------
-# Funções auxiliares para exportação de tabelas para Excel
-# ---------------------------------------------------------------------------
+# ==============================================================================
+# FUNÇÕES AUXILIARES DE EXPORTAÇÃO
+# ==============================================================================
+# Define funções reutilizáveis para exportação de tabelas Delta para
+# formato Excel, com suporte a múltiplas abas e organização por arquivo.
+# ==============================================================================
 import pandas as pd
 import tempfile
 import os
 
-# Caminho do volume de destino
+# Caminho do volume de destino para armazenamento dos arquivos exportados
 VOLUME_PATH = "/Volumes/parts_hdbk_sandbox/pr_demand/demand_refined_exportfiles"
 
-# Diretório temporário local para criação dos arquivos
+# Diretório temporário local usado durante a criação dos arquivos Excel
+# antes de copiá-los para o volume Unity Catalog
 LOCAL_TMP = tempfile.mkdtemp()
 
 print(f"Volume de destino: {VOLUME_PATH}")
@@ -75,47 +127,80 @@ print(f"Diretorio temporario: {LOCAL_TMP}")
 
 def export_table_to_excel(table_name, schema="parts_hdbk_sandbox.pr_demand"):
     """
-    Exporta uma tabela do schema para Excel.
+    Exporta uma tabela Delta para formato Excel (.xlsx).
     
-    Lógica:
-    - Se a tabela possui colunas 'file' e 'sheet':
-      -> Cria um arquivo Excel por valor de 'file'
-      -> Cada valor de 'sheet' vira uma aba no arquivo
-    - Caso contrário:
-      -> Cria um arquivo Excel simples com o nome da tabela
+    A função detecta automaticamente a estrutura da tabela e aplica a
+    lógica de exportação apropriada:
+    
+    - Tabelas com colunas 'file' e 'sheet': organizadas em múltiplos workbooks,
+      onde cada valor único de 'file' gera um arquivo .xlsx, e cada valor
+      único de 'sheet' dentro desse arquivo se torna uma aba separada.
+    
+    - Tabelas simples (sem file/sheet): exportadas como um único arquivo
+      Excel com uma única aba.
     
     Args:
-        table_name (str): Nome da tabela a ser exportada
-        schema (str): Schema completo (catalog.schema)
+        table_name (str): Nome da tabela a ser exportada (sem o prefixo de
+            schema/catalog).
+        schema (str, optional): Schema completo no formato catalog.schema.
+            Defaults to "parts_hdbk_sandbox.pr_demand".
+    
+    Returns:
+        None
+    
+    Raises:
+        Exception: Propaga qualquer erro ocorrido durante a exportação,
+            após registrá-lo no console.
+    
+    Side Effects:
+        - Cria arquivos .xlsx temporários no sistema de arquivos local
+        - Copia arquivos para o volume Unity Catalog especificado
+        - Imprime mensagens de progresso e status no console
+    
+    Example:
+        >>> export_table_to_excel("refined_demand_fechada_novos_modelos")
+        [OK] refined_demand_fechada_novos_modelos -> HDA 2026 Jul Demanda Fechada.xlsx (1250 linhas, 5 abas)
+    
+    Note:
+        - Nomes de abas Excel são truncados em 31 caracteres (limitação do formato)
+        - Colunas 'file' e 'sheet' são removidas dos dados exportados
+        - Utiliza xlsxwriter como engine para melhor performance
     """
+    full_table_name = f"{schema}.{table_name}"
+    
     try:
-        full_table_name = f"{schema}.{table_name}"
+        # Carrega DataFrame e cacheia schema ANTES de qualquer iteração
+        # (otimização Spark Connect - evita múltiplas chamadas Analyze RPC)
         df = spark.table(full_table_name)
-        
-        # Cache schema check uma vez antes da conversão (otimização Spark Connect)
         columns_list = df.columns
         has_file_sheet = "file" in columns_list and "sheet" in columns_list
         
-        # Converte para pandas (ação que dispara a execução Spark)
+        # Ação Spark: converte DataFrame para pandas DENTRO do try/except
+        # para capturar erros de execução distribuída (Spark Connect lazy evaluation)
         pdf = df.toPandas()
 
         if has_file_sheet:
-            # Tabelas com file/sheet: um workbook por 'file', uma aba por 'sheet'
+            # Tabelas organizadas: um workbook por 'file', uma aba por 'sheet'
+            # dentro de cada workbook
             for file_name, file_group in pdf.groupby("file"):
                 local_path = os.path.join(LOCAL_TMP, f"{file_name}.xlsx")
                 with pd.ExcelWriter(local_path, engine='xlsxwriter') as writer:
                     for sheet_name, sheet_group in file_group.groupby("sheet"):
-                        # Remove colunas de controle antes de exportar
+                        # Remove colunas de controle (metadados de organização)
+                        # antes de exportar os dados de negócio
                         data = sheet_group.drop(columns=["file", "sheet"])
-                        # Excel permite no máximo 31 caracteres em nomes de aba
+                        
+                        # Excel impõe limite de 31 caracteres para nomes de abas
                         data.to_excel(writer, sheet_name=str(sheet_name)[:31], index=False)
 
+                # Copia arquivo local para volume Unity Catalog
                 output_path = f"{VOLUME_PATH}/{file_name}.xlsx"
                 dbutils.fs.cp(f"file:{local_path}", output_path)
+                
                 n_sheets = file_group["sheet"].nunique()
                 print(f"[OK] {table_name} -> {file_name}.xlsx ({len(file_group)} linhas, {n_sheets} abas)")
         else:
-            # Tabelas simples: um workbook, uma aba
+            # Tabelas simples: um workbook com uma única aba
             local_path = os.path.join(LOCAL_TMP, f"{table_name}.xlsx")
             pdf.to_excel(local_path, index=False, engine='xlsxwriter')
 
@@ -130,24 +215,27 @@ def export_table_to_excel(table_name, schema="parts_hdbk_sandbox.pr_demand"):
 # COMMAND ----------
 
 # DBTITLE 1,Limpar Volume de Exportação
-# ---------------------------------------------------------------------------
-# Limpa completamente o volume de exportação antes de iniciar
-# ---------------------------------------------------------------------------
+# ==============================================================================
+# LIMPEZA DO VOLUME DE EXPORTAÇÃO
+# ==============================================================================
+# Remove todos os arquivos .xlsx existentes no volume de destino antes da
+# nova exportação.
+# ==============================================================================
 print("\n" + "="*70)
-print("LIMPANDO VOLUME DE EXPORTACAO")
+print("LIMPANDO VOLUME DE EXPORTAÇÃO")
 print("="*70)
 
 try:
-    # Lista todos os arquivos no volume
+    # Lista todos os arquivos atualmente presentes no volume
     files = dbutils.fs.ls(VOLUME_PATH)
     
     if len(files) == 0:
-        print("Volume ja esta vazio.")
+        print("Volume já está vazio.")
     else:
         print(f"\nEncontrados {len(files)} arquivos no volume.")
         print("Removendo todos os arquivos...\n")
         
-        # Remove cada arquivo
+        # Remove cada arquivo individualmente
         for file_info in files:
             file_path = file_info.path
             dbutils.fs.rm(file_path)
@@ -156,8 +244,9 @@ try:
         print(f"\n[OK] Volume limpo com sucesso! {len(files)} arquivos removidos.")
         
 except Exception as e:
+    # Falha na limpeza não deve bloquear a exportação
     print(f"[AVISO] Erro ao limpar volume: {str(e)}")
-    print("Continuando com a exportacao...")
+    print("Continuando com a exportação...")
 
 # COMMAND ----------
 
@@ -175,11 +264,12 @@ print("="*70)
 # COMMAND ----------
 
 # DBTITLE 1,Exportar Demanda Fechada
-# ---------------------------------------------------------------------------
-# [Demandas Fechadas - Novos Modelos] Demanda Fechada (Novos Modelos)
+# ------------------------------------------------------------------------------
+# Exporta Demanda Fechada - Novos Modelos
+# ------------------------------------------------------------------------------
 # Tabela: refined_demand_fechada_novos_modelos
-# Conteúdo: Tabelas com colunas file/sheet organizadas por arquivo e aba
-# ---------------------------------------------------------------------------
+# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
+# ------------------------------------------------------------------------------
 export_table_to_excel("refined_demand_fechada_novos_modelos")
 
 # COMMAND ----------
@@ -198,21 +288,23 @@ print("="*70)
 # COMMAND ----------
 
 # DBTITLE 1,Exportar Demanda Aberta
-# ---------------------------------------------------------------------------
-# [Demandas Gerais] Demanda Aberta
+# ------------------------------------------------------------------------------
+# Exporta Demanda Aberta
+# ------------------------------------------------------------------------------
 # Tabela: refined_demand_aberta
-# Conteúdo: Tabelas com colunas file/sheet organizadas por arquivo e aba
-# ---------------------------------------------------------------------------
+# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
+# ------------------------------------------------------------------------------
 export_table_to_excel("refined_demand_aberta")
 
 # COMMAND ----------
 
 # DBTITLE 1,Exportar Demanda Linha
-# ---------------------------------------------------------------------------
-# [Demandas Gerais] Demanda Linha (Contagem de SKUs)
+# ------------------------------------------------------------------------------
+# Exporta Demanda Linha
+# ------------------------------------------------------------------------------
 # Tabela: refined_demand_linha
-# Conteúdo: Tabelas com colunas file/sheet organizadas por arquivo e aba
-# ---------------------------------------------------------------------------
+# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
+# ------------------------------------------------------------------------------
 export_table_to_excel("refined_demand_linha")
 
 # COMMAND ----------
@@ -231,23 +323,23 @@ print("="*70)
 # COMMAND ----------
 
 # DBTITLE 1,Exportar Demanda MI
-# ---------------------------------------------------------------------------
-# [Demandas por Mercado] Demanda MI (Mercado Interno)
+# ------------------------------------------------------------------------------
+# Exporta Demanda MI
+# ------------------------------------------------------------------------------
 # Tabela: refined_demand_mi
-# Filtro: canal_dist = '01'
-# Conteúdo: Tabelas com colunas file/sheet organizadas por arquivo e aba
-# ---------------------------------------------------------------------------
+# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
+# ------------------------------------------------------------------------------
 export_table_to_excel("refined_demand_mi")
 
 # COMMAND ----------
 
 # DBTITLE 1,Exportar Demanda ME
-# ---------------------------------------------------------------------------
-# [Demandas por Mercado] Demanda ME (Mercado Externo)
+# ------------------------------------------------------------------------------
+# Exporta Demanda ME
+# ------------------------------------------------------------------------------
 # Tabela: refined_demand_me
-# Filtro: canal_dist = '02'
-# Conteúdo: Tabelas com colunas file/sheet organizadas por arquivo e aba
-# ---------------------------------------------------------------------------
+# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
+# ------------------------------------------------------------------------------
 export_table_to_excel("refined_demand_me")
 
 # COMMAND ----------
@@ -266,24 +358,23 @@ print("="*70)
 # COMMAND ----------
 
 # DBTITLE 1,Exportar Pedidos ZPUG
-# ---------------------------------------------------------------------------
-# [Pedidos ZPUG] Pedidos ZPUG Agregados
+# ------------------------------------------------------------------------------
+# Exporta Pedidos ZPUG Agregados
+# ------------------------------------------------------------------------------
 # Tabela: refined_demand_zpug
-# Filtro: tipo_ov = 'ZPUG'
-# Conteúdo: Tabelas com colunas file/sheet organizadas por arquivo e aba
-# ---------------------------------------------------------------------------
+# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
+# ------------------------------------------------------------------------------
 export_table_to_excel("refined_demand_zpug")
 
 # COMMAND ----------
 
 # DBTITLE 1,Exportar Pedidos ZPUG por Cliente
-# ---------------------------------------------------------------------------
-# [Pedidos ZPUG] Pedidos ZPUG por Cliente
+# ------------------------------------------------------------------------------
+# Exporta Pedidos ZPUG por Cliente
+# ------------------------------------------------------------------------------
 # Tabela: refined_demand_zpug_cliente
-# Filtro: tipo_ov = 'ZPUG'
-# Agrupamento: item_principal_cadeia + emissor_da_ordem (Cliente)
-# Conteúdo: Tabelas com colunas file/sheet organizadas por arquivo e aba
-# ---------------------------------------------------------------------------
+# Estrutura: Múltiplos arquivos Excel com colunas 'file' e 'sheet'
+# ------------------------------------------------------------------------------
 export_table_to_excel("refined_demand_zpug_cliente")
 
 # COMMAND ----------
@@ -303,24 +394,25 @@ print("="*70)
 # COMMAND ----------
 
 # DBTITLE 1,Exportar Distribuição
-# ---------------------------------------------------------------------------
-# [Distribuição] Distribuição por Centro e Mercado (HDA + HAB)
+# ------------------------------------------------------------------------------
+# Exporta Distribuição
+# ------------------------------------------------------------------------------
 # Tabela: refined_demand_distribuicao
-# Conteúdo:
-#   - Colunas de centros HDA (0203, 0209, 0232) com percentuais
-#   - Colunas de centros HAB (0503, 0505) com percentuais
-#   - Colunas de mercado (MI/ME) com percentuais
-# ---------------------------------------------------------------------------
+# Estrutura: Arquivo Excel sem colunas 'file'/'sheet' (tabela simples)
+# ------------------------------------------------------------------------------
 export_table_to_excel("refined_demand_distribuicao")
 
 # COMMAND ----------
 
 # DBTITLE 1,Resumo da Exportação
-# ---------------------------------------------------------------------------
-# Resumo final da exportação
-# ---------------------------------------------------------------------------
+# ==============================================================================
+# RESUMO DA EXPORTAÇÃO
+# ==============================================================================
+# Exibe estatísticas finais e confirmação de conclusão bem-sucedida.
+# ==============================================================================
 print("\n" + "="*70)
-print("EXPORTACAO CONCLUIDA COM SUCESSO!")
+print("✅ EXPORTAÇÃO CONCLUÍDA COM SUCESSO!")
 print("="*70)
-print(f"\nArquivos salvos em: {VOLUME_PATH}")
-print(f"Total de tabelas exportadas: {len(table_names)}")
+print(f"\n📁 Local: {VOLUME_PATH}")
+print(f"📊 Total de tabelas exportadas: {len(table_names)}")
+print("\nℹ️  Os arquivos Excel estão prontos para compartilhamento.")
