@@ -163,27 +163,29 @@ SCHEMA: pr_demand
 
 ### Segmentação de Mercado
 
-* **HDA (Honda Automóveis)** - Org Vendas: 0200
-* **HAB (Honda Auto Body)** - Org Vendas: 0300
+* **HDA (Honda da Amazônia)** - Org Vendas: 0200
+* **HAB (Honda Automóveis do Brasil)** - Org Vendas: 0300
 
 ### Praças (Centros de Distribuição)
 
 * **TTL** - Consolidado Brasil
-* **0203** - São Paulo
-* **0209** - Sumaré
-* **0232** - Manaus
-* **0238** - Recife
+* **0203** - Sumaré-SP (2W)
+* **0209** - Jaboatão dos Guararapes-PE (2W)
+* **0232** - Manaus-AM (2W)
+* **0503** - Sumaré-SP (4W)
+* **0505** - Jaboatão dos Guararapes-PE (4W)
+
 
 ### Tipos de Demanda
 
-| Tipo | Descrição | Uso |
+| Tipo | Descrição e Uso |
 |------|-----------|-----|
-| **Fechada** | Pedidos confirmados | Produção planejada |
-| **Aberta** | Ordens em processamento | Pipeline de vendas |
-| **Novos Modelos** | Lançamentos (ex-ZESP) | Forecast de introdução |
-| **ZPUG** | Pedidos especiais | Urgências |
-| **MI/ME** | Movimentação interna/externa | Transferências |
-| **Distribuição** | Por canal de vendas | Análise estratégica |
+| **Fechada** | Pedidos agrupados por item principal da cadeia |
+| **Aberta** | Pedidos sem agrupamento por item principal da cadeia | Material Original |
+| **Novos Modelos** | Dados de Demanda sem ZESP |
+| **ZPUG** | Pedido Urgente de Garantia |
+| **MI/ME** | Mercado Interno (Doméstico) e Mercado Externo (Exportação/Overseas) 
+| **Distribuição** | Por centro e por canal de vendas | Análise estratégica para Forecast |
 
 ---
 
@@ -280,7 +282,7 @@ GRANT SELECT, MODIFY ON SCHEMA parts_hdbk_sandbox.pr_demand TO `user@domain.com`
 **Autor:** André Causs  
 **Departamento:** Demand Planning  
 **Divisão:** Honda Parts Division  
-**Email:** andrecauss88@gmail.com
+**Email:** andrecauss@gmail.com; andrecauss88@gmail.com; andre_causs@honda.com.br
 
 ---
 
