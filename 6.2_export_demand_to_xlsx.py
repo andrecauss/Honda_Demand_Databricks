@@ -125,18 +125,12 @@ print(f"Tabelas: {sorted(table_names)}")
 # formato Excel, com suporte a múltiplas abas e organização por arquivo.
 # ==============================================================================
 import pandas as pd
-import tempfile
-import os
+from io import BytesIO
 
 # Caminho do volume de destino para armazenamento dos arquivos exportados
 VOLUME_PATH = "/Volumes/parts_hdbk_sandbox/pr_demand/demand_refined_exportfiles"
 
-# Diretório temporário local usado durante a criação dos arquivos Excel
-# antes de copiá-los para o volume Unity Catalog
-LOCAL_TMP = tempfile.mkdtemp()
-
 print(f"Volume de destino: {VOLUME_PATH}")
-print(f"Diretorio temporario: {LOCAL_TMP}")
 
 
 def export_table_to_excel(table_name, schema="parts_hdbk_sandbox.pr_demand"):
@@ -182,13 +176,13 @@ def export_table_to_excel(table_name, schema="parts_hdbk_sandbox.pr_demand"):
     """
     full_table_name = f"{schema}.{table_name}"
     
+    # Carrega DataFrame e cacheia schema ANTES do try/except
+    # (otimização Spark Connect - evita múltiplas chamadas Analyze RPC)
+    df = spark.table(full_table_name)
+    columns_list = df.columns
+    has_file_sheet = "file" in columns_list and "sheet" in columns_list
+    
     try:
-        # Carrega DataFrame e cacheia schema ANTES de qualquer iteração
-        # (otimização Spark Connect - evita múltiplas chamadas Analyze RPC)
-        df = spark.table(full_table_name)
-        columns_list = df.columns
-        has_file_sheet = "file" in columns_list and "sheet" in columns_list
-        
         # Ação Spark: converte DataFrame para pandas DENTRO do try/except
         # para capturar erros de execução distribuída (Spark Connect lazy evaluation)
         pdf = df.toPandas()
@@ -197,8 +191,9 @@ def export_table_to_excel(table_name, schema="parts_hdbk_sandbox.pr_demand"):
             # Tabelas organizadas: um workbook por 'file', uma aba por 'sheet'
             # dentro de cada workbook
             for file_name, file_group in pdf.groupby("file"):
-                local_path = os.path.join(LOCAL_TMP, f"{file_name}.xlsx")
-                with pd.ExcelWriter(local_path, engine='xlsxwriter') as writer:
+                # Cria Excel em memória (BytesIO) - sem acesso ao filesystem local
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     for sheet_name, sheet_group in file_group.groupby("sheet"):
                         # Remove colunas de controle (metadados de organização)
                         # antes de exportar os dados de negócio
@@ -207,19 +202,21 @@ def export_table_to_excel(table_name, schema="parts_hdbk_sandbox.pr_demand"):
                         # Excel impõe limite de 31 caracteres para nomes de abas
                         data.to_excel(writer, sheet_name=str(sheet_name)[:31], index=False)
 
-                # Copia arquivo local para volume Unity Catalog
+                # Escreve buffer em memória diretamente no volume UC
                 output_path = f"{VOLUME_PATH}/{file_name}.xlsx"
-                dbutils.fs.cp(f"file:{local_path}", output_path)
+                buffer.seek(0)
+                dbutils.fs.put(output_path, buffer.read(), overwrite=True)
                 
                 n_sheets = file_group["sheet"].nunique()
                 print(f"[OK] {table_name} -> {file_name}.xlsx ({len(file_group)} linhas, {n_sheets} abas)")
         else:
             # Tabelas simples: um workbook com uma única aba
-            local_path = os.path.join(LOCAL_TMP, f"{table_name}.xlsx")
-            pdf.to_excel(local_path, index=False, engine='xlsxwriter')
-
+            buffer = BytesIO()
+            pdf.to_excel(buffer, index=False, engine='xlsxwriter')
+            
             output_path = f"{VOLUME_PATH}/{table_name}.xlsx"
-            dbutils.fs.cp(f"file:{local_path}", output_path)
+            buffer.seek(0)
+            dbutils.fs.put(output_path, buffer.read(), overwrite=True)
             print(f"[OK] {table_name}.xlsx: {len(pdf)} linhas")
 
     except Exception as e:
@@ -273,15 +270,15 @@ except Exception as e:
 # ==============================================================================
 
 print("\n" + "="*70)
-print("EXPORTANDO TODAS AS TABELAS REFINADAS")
+print("TESTE: EXPORTANDO 2 TABELAS")
 print("="*70)
 
-# Contadores para estatísticas finais
 tabelas_exportadas = 0
 tabelas_com_erro = 0
 erros = []
 
-for table_name in sorted(table_names):
+# TESTE: processa apenas as 2 primeiras tabelas
+for table_name in sorted(table_names)[:2]:
     try:
         print(f"\n[EXPORTANDO] {table_name}...")
         export_table_to_excel(table_name)

@@ -3,6 +3,64 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+# DBTITLE 1,Propósito do Notebook
+# ==============================================================================
+# NOTEBOOK: 5.1 - Apuração de Demanda Fechada (v1)
+# ==============================================================================
+#
+# PROPÓSITO:
+#   Calcular as tabelas refined_demand_* consumidas pela exportação Excel,
+#   a partir das ordens de venda enriquecidas com cadeia de produto e centro
+#   de distribuição. Esta é a versão ORIGINAL (v1) — ver 5.1_v2 para a versão
+#   corrigida para serverless com janela de meses configurável.
+#
+# ARQUITETURA:
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │ INPUT: raw_sales_order, material_cadeia, knvv_sap, kna1_sap         │
+#   └────────────────────────┬────────────────────────────────────────────┘
+#                            │
+#                            v
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │ TRANSFORMAÇÃO:                                                      │
+#   │   • vw_sales_orders: join de ordens + cadeia + centro + cliente     │
+#   │     (filtro data >= data_minima via spark.conf.set)                 │
+#   │   • Pivot mensal (yyyy/MM) por segmento (HDA/HAB) e tipo de demanda │
+#   │   • União das praças (TTL + centros) em UMA tabela por tipo, via    │
+#   │     unionByName — praça fica na coluna 'sheet', não em tabelas      │
+#   │     separadas (diferente do 5.1_v2)                                 │
+#   └────────────────────────┬────────────────────────────────────────────┘
+#                            │
+#                            v
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │ OUTPUT: parts_hdbk_sandbox.pr_demand (schema)                       │
+#   │   refined_demand_fechada, _fechada_novos_modelos, _aberta, _linha,  │
+#   │   _mi, _me, _zpug, _zpug_cliente, _distribuicao                     │
+#   │   (uma tabela por tipo, todas as praças e os dois segmentos juntos) │
+#   └─────────────────────────────────────────────────────────────────────┘
+#
+# CONVENÇÕES:
+#   • Colunas 'file'/'sheet' identificam o workbook/aba de destino na
+#     exportação — ver 6.1/6.2
+#   • Janela temporal fixa: 48 meses, calculada via spark.conf.set (célula
+#     seguinte) — não usa o parâmetro JANELA_MESES do 5.1_v2
+#
+# DEPENDÊNCIAS:
+#   • python-dateutil (relativedelta)
+#
+# EXECUÇÃO:
+#   1. Run All. A última célula é scratch (consultas ad-hoc) e não roda
+#      automaticamente — está comentada de propósito
+#   2. ATENÇÃO: usa spark.conf.set()/${spark.conf.data_minima} em SQL, padrão
+#      que quebra em compute serverless — se falhar, usar o 5.1_v2
+#
+# AUTOR: Andre Causs - Honda Peças - Planejamento
+# ÚLTIMA ATUALIZAÇÃO: 2026-08-09
+# ==============================================================================
+
+print("📊 Notebook 5.1 (v1) - Apuração de Demanda Fechada carregado.")
+
+# COMMAND ----------
+
 # DBTITLE 1,Cálculo de Parâmetros Automáticos
 from datetime import datetime
 from dateutil.relativedelta import relativedelta

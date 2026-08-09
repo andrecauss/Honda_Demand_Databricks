@@ -25,7 +25,7 @@
 #   ┌─────────────────────────────────────────────────────────────────────┐
 #   │ TRANSFORMAÇÃO:                                                      │
 #   │   • Enriquecimento com hierarquia de cadeia e dados de cliente      │
-#   │   • Filtro por janela temporal (48 meses)                           │
+#   │   • Filtro por janela temporal (24 meses)                           │
 #   │   • Pivot por período (yyyy/MM)                                     │
 #   │   • Agregação por item_principal_cadeia, material, cliente          │
 #   └────────────────────────┬────────────────────────────────────────────┘
@@ -103,11 +103,18 @@ print("✓ Pronto para processar segmentos HDA (2W) e HAB (4W).")
 
 # Janela de análise temporal (em meses)
 # Define quantos meses fechados de histórico serão incluídos na análise
-# Valor padrão: 48 meses (4 anos)
-JANELA_MESES = 48
+# Valor padrão: 24 meses (2 anos)
+JANELA_MESES = 24
+
+# Janela específica para "Pedido ZPUG por Cliente" (refined_demand_zpug_cliente_*).
+# Separada de JANELA_MESES porque essa agregação é por cliente x item, então o
+# volume de linhas cresce muito mais rápido com o histórico — em 24 meses já
+# estourava o teto de exportação em arquivo único do notebook 6.2.
+JANELA_MESES_ZPUG_CLI = 12
 
 print(f"⚙️ Parâmetros configurados:")
 print(f"   • Janela temporal: {JANELA_MESES} meses fechados")
+print(f"   • Janela ZPUG por Cliente: {JANELA_MESES_ZPUG_CLI} meses fechados")
 
 # COMMAND ----------
 
@@ -139,7 +146,7 @@ if data_max:
     mes = data_referencia.month
     
     # Calcula data_minima: primeiro dia do mês que inicia a janela de JANELA_MESES fechados
-    # Ex: se último mês é junho/2026 e JANELA_MESES=48, então julho/2022 até junho/2026
+    # Ex: se último mês é junho/2026 e JANELA_MESES=24, então julho/2024 até junho/2026
     data_minima_dt = data_referencia - relativedelta(months=JANELA_MESES - 1)
     # Pega o primeiro dia do mês resultante
     data_minima_dt = data_minima_dt.replace(day=1)
@@ -148,9 +155,15 @@ if data_max:
     # Define como variável Python para uso em células SQL via substituição
     # (spark.conf.set só aceita chaves pré-definidas do Spark)
     
+    # Mesma lógica acima, aplicada à janela reduzida de ZPUG por Cliente
+    data_minima_zpug_dt = data_referencia - relativedelta(months=JANELA_MESES_ZPUG_CLI - 1)
+    data_minima_zpug_dt = data_minima_zpug_dt.replace(day=1)
+    data_minima_zpug = data_minima_zpug_dt.strftime("%Y-%m-%d")
+
     print(f"📅 Data de referência (mais recente): {data_referencia.strftime('%Y-%m-%d')}")
     print(f"📅 Ano: {ano}, Mês: {mes}")
     print(f"📅 Data mínima ({JANELA_MESES} meses atrás): {data_minima}")
+    print(f"📅 Data mínima ZPUG por Cliente ({JANELA_MESES_ZPUG_CLI} meses atrás): {data_minima_zpug}")
 else:
     raise ValueError("Não foi possível determinar a data mais recente das ordens de venda")
 
@@ -654,7 +667,7 @@ org_vendas = "0200"
 arquivo = _nome_arquivo(org_vendas, "Pedido ZPUG Cliente")
 
 df_base = df.filter(
-    (df.data >= data_minima) & (df.org_vendas == org_vendas) & (df.tipo_ov == "ZPUG")
+    (df.data >= data_minima_zpug) & (df.org_vendas == org_vendas) & (df.tipo_ov == "ZPUG")
 )
 
 # Processa aba TTL e salva em tabela com sufixo
@@ -1048,7 +1061,7 @@ org_vendas = "0500"
 arquivo = _nome_arquivo(org_vendas, "Pedido ZPUG Cliente")
 
 df_base = df.filter(
-    (df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.tipo_ov == "ZPUG")
+    (df.data >= to_date(lit(data_minima_zpug))) & (df.org_vendas == org_vendas) & (df.tipo_ov == "ZPUG")
 )
 
 # Processa aba TTL e salva em tabela com sufixo
