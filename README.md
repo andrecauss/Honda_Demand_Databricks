@@ -178,13 +178,13 @@ SCHEMA: pr_demand
 
 ### Tipos de Demanda
 
-| Tipo | Descrição e Uso |
+| Tipo | Descrição | Uso |
 |------|-----------|-----|
-| **Fechada** | Pedidos agrupados por item principal da cadeia |
-| **Aberta** | Pedidos sem agrupamento por item principal da cadeia | Material Original |
-| **Novos Modelos** | Dados de Demanda sem ZESP |
-| **ZPUG** | Pedido Urgente de Garantia |
-| **MI/ME** | Mercado Interno (Doméstico) e Mercado Externo (Exportação/Overseas) 
+| **Fechada** | Pedidos agrupados por item principal da cadeia | Utilizada para planejamento em geral |
+| **Aberta** | Pedidos sem agrupamento por item principal da cadeia | Contém a intenção original de compra |
+| **Novos Modelos** | Dados de Demanda sem ZESP | Retira tipo de pedido que pode distorcer o forecast |
+| **ZPUG** | Pedido Urgente de Garantia | Utilizada para planejamento em geral |
+| **MI/ME** | Mercado Interno (Doméstico) e Mercado Externo (Exportação/Overseas) | Utilizada para planejamento em geral |
 | **Distribuição** | Por centro e por canal de vendas | Análise estratégica para Forecast |
 
 ---
