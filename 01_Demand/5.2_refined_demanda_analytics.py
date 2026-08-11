@@ -1,14 +1,18 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # DBTITLE 1,Propósito do Notebook
 # ==============================================================================
-# NOTEBOOK: 5.2 - Demanda Refinada (rascunho / agente de IA)
+# NOTEBOOK: 5.2 - Refined Demand Analytics
 # ==============================================================================
 #
 # PROPÓSITO:
-#   Rascunho de uma variante do 5.1 (janela configurável via JANELA_MESES,
-#   filtro por f-string em vez de spark.conf). Hoje o notebook só monta a
-#   view intermediária vw_sales_orders — não gera nenhuma tabela
-#   refined_demand_* ainda.
+#   Gera a tabela refinada de demanda (refined_demand_analytics) a partir das
+#   ordens de venda brutas, enriquecidas com hierarquia de cadeia de produtos
+#   e dados cadastrais de clientes. Aplica mapeamento padronizado de campos
+#   (renomeação + tipagem) antes de persistir.
 #
 # ARQUITETURA:
 #   ┌─────────────────────────────────────────────────────────────────────┐
@@ -18,32 +22,40 @@
 #                            v
 #   ┌─────────────────────────────────────────────────────────────────────┐
 #   │ TRANSFORMAÇÃO:                                                      │
-#   │   • JANELA_MESES define data_minima (dinâmico, igual ao 5.1_v2)     │
+#   │   • JANELA_MESES define data_minima (dinâmico, via f-string)        │
 #   │   • vw_sales_orders: join de ordens + cadeia + centro + cliente     │
-#   │     (filtro data >= data_minima via f-string, compatível serverless)│
+#   │   • Mapeamento de campos: renomeação padronizada + cast de tipos    │
 #   └────────────────────────┬────────────────────────────────────────────┘
 #                            │
 #                            v
 #   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ OUTPUT: nenhum ainda — só a TEMP VIEW vw_sales_orders               │
-#   │   (rascunho incompleto: falta a parte de agregação/pivot)           │
+#   │ OUTPUT: parts_hdbk_sandbox.dt_sales_orders.refined_demand_analytics │
 #   └─────────────────────────────────────────────────────────────────────┘
 #
+# DIMENSÕES DE ANÁLISE:
+#   • Temporal: data_ordem (date) — janela configurável via JANELA_MESES
+#   • Produto: codigo_material, familia_produto (item_principal_cadeia)
+#   • Cliente: codigo_cliente, cliente (razão social), uf_cliente, pais_cliente
+#   • Canal: organizacao_vendas, canal_distribuicao
+#   • Distribuição: centro_fornecedor, centro_distribuicao_original
+#
 # CONVENÇÕES:
+#   • Colunas de saída em snake_case padronizado (ver MAPEAMENTO_CAMPOS)
 #   • Mesmo padrão de vw_sales_orders do 5.1/5.1_v2
 #
 # DEPENDÊNCIAS:
 #   • python-dateutil (relativedelta)
 #
 # EXECUÇÃO:
-#   Notebook incompleto — não faz parte do pipeline de produção. Avaliar se
-#   ainda está em uso antes de apagar ou de continuar o desenvolvimento.
+#   Executar todas as células sequencialmente. A tabela de saída é sobrescrita
+#   a cada execução (mode=overwrite + overwriteSchema=true).
 #
 # AUTOR: Andre Causs - Honda Peças - Planejamento
-# ÚLTIMA ATUALIZAÇÃO: 2026-08-09
+# ÚLTIMA ATUALIZAÇÃO: 2026-08-11
 # ==============================================================================
 
-print("📊 Notebook 5.2 (rascunho) carregado — só monta vw_sales_orders.")
+print("📊 Notebook 5.2 - Refined Demand Analytics carregado.")
+print("✓ Pronto para processar.")
 
 # COMMAND ----------
 
@@ -56,8 +68,9 @@ print("📊 Notebook 5.2 (rascunho) carregado — só monta vw_sales_orders.")
 
 # Janela de análise temporal (em meses)
 # Define quantos meses fechados de histórico serão incluídos na análise
-# Valor padrão: 48 meses (4 anos)
-JANELA_MESES = 48
+# Valor padrão: 60 meses (5 anos)
+
+JANELA_MESES = 60
 
 print(f"⚙️ Parâmetros configurados:")
 print(f"   • Janela temporal: {JANELA_MESES} meses fechados")
@@ -157,3 +170,77 @@ WHERE rso.data >= '{data_minima}'
 """)
 
 print(f"✓ View vw_sales_orders criada com filtro: data >= {data_minima}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Mapeamento de Campos
+from pyspark.sql.functions import col
+
+# ==============================================================================
+# MAPEAMENTO DE CAMPOS (nome + tipo)
+# ==============================================================================
+# Dicionário de-para para renomear e converter tipos das colunas.
+# Estrutura: "campo_original": ("novo_nome", "tipo_destino")
+#   - novo_nome: nome padronizado da coluna
+#   - tipo_destino: tipo Spark para cast (string, int, long, double, date,
+#                   timestamp, etc.). Use None para manter o tipo original.
+# ==============================================================================
+
+MAPEAMENTO_CAMPOS = {
+    # campo_original        : (novo_nome,                      tipo_destino)
+    "numero_ov":            ("numero_ordem_venda",             "string"),
+    "data":                 ("data_ordem",                     "date"),
+    "tipo_ov":              ("tipo_ordem_venda",               "string"),
+    "org_vendas":           ("organizacao_vendas",             "string"),
+    "canal_dist":           ("canal_distribuicao",             "string"),
+    "emissor_da_ordem":     ("codigo_cliente",                 "string"),
+    "centro":               ("centro_fornecedor",              "string"),
+    "material":             ("codigo_material",                "string"),
+    "quantidade":           ("quantidade",                     "int"),
+    "item_principal_cadeia": ("familia_produto",               "string"),
+    "centro_original":      ("centro_distribuicao_original",   "string"),
+    "razao_social":         ("cliente",                        "string"),
+    "estado":               ("uf_cliente",                     "string"),
+    "pais":                 ("pais_cliente",                   "string"),
+}
+
+# ==============================================================================
+# APLICA RENOMEAÇÃO E CONVERSÃO DE TIPOS
+# ==============================================================================
+# Fonte: vw_sales_orders (view criada na célula anterior)
+# Lógica: computa colunas disponíveis uma única vez (evita Analyze RPC
+# repetido dentro do loop — lint SCPAP001).
+# ==============================================================================
+
+df = spark.table("vw_sales_orders")
+
+# Computa schema uma vez antes do loop para evitar RPCs repetidos
+colunas_disponiveis = set(df.columns)
+
+colunas_select = [
+    (col(col_original).cast(tipo) if tipo else col(col_original)).alias(col_novo)
+    for col_original, (col_novo, tipo) in MAPEAMENTO_CAMPOS.items()
+    if col_original in colunas_disponiveis
+]
+
+df = df.select(colunas_select)
+
+print("✓ Mapeamento aplicado (nome + tipo). Schema resultante:")
+for field in df.schema.fields:
+    print(f"   • {field.name:<30} {field.dataType.simpleString()}")
+
+display(df.limit(5))
+
+# ==============================================================================
+# OUTPUT: refined_demand_analytics
+# ==============================================================================
+# Persiste o DataFrame já mapeado (nomes + tipos) como tabela Delta.
+# Saída: parts_hdbk_sandbox.dt_sales_orders.refined_demand_analytics
+# Mode: overwrite (tabela é recriada a cada execução)
+# ==============================================================================
+
+TABELA_DESTINO = "parts_hdbk_sandbox.dt_sales_orders.refined_demand_analytics"
+
+df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABELA_DESTINO)
+
+print(f"✓ Tabela {TABELA_DESTINO} criada/atualizada.")
