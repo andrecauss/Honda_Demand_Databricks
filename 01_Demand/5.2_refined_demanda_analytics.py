@@ -239,7 +239,7 @@ display(df.limit(5))
 # Mode: overwrite (tabela é recriada a cada execução)
 # ==============================================================================
 
-TABELA_DESTINO = "parts_hdbk_sandbox.dt_sales_orders.refined_demand_analytics"
+TABELA_DESTINO = "parts_hdbk_sandbox.pr_demand.refined_demand_analytics"
 
 df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABELA_DESTINO)
 
