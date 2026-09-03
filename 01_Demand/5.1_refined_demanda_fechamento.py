@@ -108,7 +108,7 @@ print("✓ Pronto para processar segmentos HDA (2W) e HAB (4W).")
 # Define quantos meses fechados de histórico serão incluídos na análise
 # Valor padrão: 24 meses (2 anos)
 #JANELA_MESES = 24
-JANELA_MESES = 91
+JANELA_MESES = 60
 
 # Janela específica para "Pedido ZPUG por Cliente" (refined_demand_zpug_cliente_*).
 # Separada de JANELA_MESES porque essa agregação é por cliente x item, então o
