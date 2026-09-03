@@ -84,51 +84,64 @@ if data_max:
     ano = data_referencia.year
     mes = data_referencia.month
     
-    # Calcula data_minima: 48 meses (4 anos) antes da data de referência
-    data_minima_dt = data_referencia - relativedelta(months=48)
-    data_minima = data_minima_dt.strftime("%Y-%m-%d")
-    
-    # Define como configuração do Spark para uso em células SQL
-    spark.conf.set("data_minima", data_minima)
+    # Usa parâmetro do widget se preenchido; senão, calcula 48 meses atrás
+    param_valor = dbutils.widgets.get("data_minima_param").strip()
+    if param_valor:
+        # Aceita dd/MM/yyyy ou yyyy-MM-dd
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                data_minima = datetime.strptime(param_valor, fmt).strftime("%Y-%m-%d")
+                break
+            except ValueError:
+                continue
+        else:
+            raise ValueError(f"Formato de data inválido: '{param_valor}'. Use dd/MM/yyyy ou yyyy-MM-dd.")
+        print(f"📅 Data mínima (informada via parâmetro): {data_minima}")
+    else:
+        data_minima_dt = data_referencia - relativedelta(months=48)
+        data_minima = data_minima_dt.strftime("%Y-%m-%d")
+        print(f"📅 Data mínima (automática, 48 meses atrás): {data_minima}")
     
     print(f"📅 Data de referência (mais recente): {data_referencia.strftime('%Y-%m-%d')}")
     print(f"📅 Ano: {ano}, Mês: {mes}")
-    print(f"📅 Data mínima (48 meses atrás): {data_minima}")
 else:
     raise ValueError("Não foi possível determinar a data mais recente das ordens de venda")
 
 # COMMAND ----------
 
 # DBTITLE 1,Sales Orders com Cadeia e Centro Original
-# MAGIC %sql
-# MAGIC CREATE OR REPLACE TEMP VIEW vw_sales_orders AS
-# MAGIC SELECT
-# MAGIC   rso.numero_ov,
-# MAGIC   rso.data,
-# MAGIC   rso.tipo_ov,
-# MAGIC   rso.org_vendas,
-# MAGIC   rso.canal_dist,
-# MAGIC   rso.emissor_da_ordem,
-# MAGIC   rso.centro,
-# MAGIC   rso.material,  
-# MAGIC   rso.quantidade,
-# MAGIC   COALESCE(mc.item_principal_cadeia, rso.material) AS item_principal_cadeia,
-# MAGIC   k.cen AS centro_original,
-# MAGIC   kna.razao_social,
-# MAGIC   kna.estado,
-# MAGIC   kna.pais
-# MAGIC FROM parts_hdbk_sandbox.dt_sales_orders.raw_sales_order rso
-# MAGIC LEFT JOIN parts_hdbk_sandbox.pr_cadastrao.material_cadeia mc
-# MAGIC   ON rso.material = mc.material
-# MAGIC   AND rso.org_vendas = mc.empresa
-# MAGIC LEFT JOIN parts_hdbk_sandbox.dm_customers.knvv_sap k
-# MAGIC   ON rso.emissor_da_ordem = k.cliente
-# MAGIC   AND rso.org_vendas = k.orgv
-# MAGIC   AND rso.canal_dist = k.cdst
-# MAGIC   AND rso.setor_ativ = k.sa
-# MAGIC LEFT JOIN parts_hdbk_sandbox.dm_customers.kna1_sap kna
-# MAGIC   ON rso.emissor_da_ordem = kna.cliente
-# MAGIC WHERE rso.data >= '${spark.conf.data_minima}'
+spark.sql(f"""
+CREATE OR REPLACE TEMP VIEW vw_sales_orders AS
+SELECT
+  rso.numero_ov,
+  rso.data,
+  rso.tipo_ov,
+  rso.org_vendas,
+  rso.canal_dist,
+  rso.emissor_da_ordem,
+  rso.centro,
+  rso.material,  
+  rso.quantidade,
+  COALESCE(mc.item_principal_cadeia, rso.material) AS item_principal_cadeia,
+  k.cen AS centro_original,
+  kna.razao_social,
+  kna.estado,
+  kna.pais
+FROM parts_hdbk_sandbox.dt_sales_orders.raw_sales_order rso
+LEFT JOIN parts_hdbk_sandbox.pr_cadastrao.material_cadeia mc
+  ON rso.material = mc.material
+  AND rso.org_vendas = mc.empresa
+LEFT JOIN parts_hdbk_sandbox.dm_customers.knvv_sap k
+  ON rso.emissor_da_ordem = k.cliente
+  AND rso.org_vendas = k.orgv
+  AND rso.canal_dist = k.cdst
+  AND rso.setor_ativ = k.sa
+LEFT JOIN parts_hdbk_sandbox.dm_customers.kna1_sap kna
+  ON rso.emissor_da_ordem = kna.cliente
+WHERE rso.data >= '{data_minima}'
+""")
+
+print(f"\u2713 View vw_sales_orders criada com filtro data >= {data_minima}")
 
 # COMMAND ----------
 

@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # DBTITLE 1,Propósito do Notebook
 # MAGIC %md
 # MAGIC # Cadeia de Substituição de Materiais

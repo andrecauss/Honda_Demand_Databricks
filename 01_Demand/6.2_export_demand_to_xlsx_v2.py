@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # DBTITLE 1,Propósito do Notebook
 # ==============================================================================
 # NOTEBOOK: 6.2 - Exportação de Demandas para Excel (v2)
@@ -14,11 +18,12 @@
 #   ┌─────────────────────────────────────────────────────────────────────┐
 #   │ INPUT: parts_hdbk_sandbox.pr_demand (schema)                        │
 #   │   • refined_demand_fechada_{SEGMENTO}_{CENTRO}                      │
-#   │   • refined_demand_fechada_novos_modelos_{SEGMENTO}_{CENTRO}        │
+#   │   • refined_demand_fechada_sem_zesp_{SEGMENTO}_{CENTRO}             │
 #   │   • refined_demand_aberta_{SEGMENTO}_{CENTRO}                       │
 #   │   • refined_demand_linha_{SEGMENTO}_{CENTRO}                        │
 #   │   • refined_demand_mi_{SEGMENTO}_{CENTRO}                           │
 #   │   • refined_demand_me_{SEGMENTO}_TTL                                │
+#   │   • refined_demand_me_sem_zesp{SEGMENTO}_TTL                        │
 #   │   • refined_demand_zpug_{SEGMENTO}_TTL                              │
 #   │   • refined_demand_zpug_cliente_{SEGMENTO}_TTL                      │
 #   │   • refined_demand_distribuicao_{SEGMENTO}_TTL                      │
@@ -125,7 +130,7 @@ from databricks.sdk import WorkspaceClient
 
 # Caminho do volume de destino para armazenamento dos arquivos exportados
 SCHEMA = "parts_hdbk_sandbox.pr_demand"
-VOLUME_PATH = "/Volumes/parts_hdbk_sandbox/pr_demand/demand_refined_exportfiles"
+VOLUME_PATH = "/Volumes/parts_hdbk_sandbox/_file_orchestrator/demand/01_apuracao_demanda/out"
 
 # Tetos de segurança: toPandas() traz tudo para o driver, então a coleta é
 # limitada. O teto de células é o limite prático do Excel para um único arquivo.

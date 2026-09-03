@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # DBTITLE 1,Propósito do Notebook
 # ==============================================================================
 # NOTEBOOK: 99 - Carga Histórica de Sales Order (bootstrap)
@@ -55,7 +59,6 @@ print("📊 Notebook 99 - Carga Histórica de Sales Order carregado.")
 # COMMAND ----------
 
 # DBTITLE 1,Bootstrap Raw Sales Order Data from SAP Parquet Files
-# Databricks notebook source
 
 # =============================================================================
 # Projeto........: Parts Handbook
@@ -370,7 +373,7 @@ display(
 
 # COMMAND ----------
 
-org_vendas_param = "0500"  # Defina o valor desejado
+org_vendas_param = "0200"  # Defina o valor desejado
 
 display(
     spark.table(RAW_TABLE)

@@ -5,11 +5,11 @@
 # ///
 # DBTITLE 1,Propósito do Notebook
 # ==============================================================================
-# NOTEBOOK: 5.2 - Refined Demand Analytics
+# NOTEBOOK: 5.2 - Demand Analytical Base
 # ==============================================================================
 #
 # PROPÓSITO:
-#   Gera a tabela refinada de demanda (refined_demand_analytics) a partir das
+#   Gera a tabela analítica base (demand_analytical_base) a partir das
 #   ordens de venda brutas, enriquecidas com hierarquia de cadeia de produtos
 #   e dados cadastrais de clientes. Aplica mapeamento padronizado de campos
 #   (renomeação + tipagem) antes de persistir.
@@ -29,7 +29,7 @@
 #                            │
 #                            v
 #   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ OUTPUT: parts_hdbk_sandbox.dt_sales_orders.refined_demand_analytics │
+#   │ OUTPUT: parts_hdbk_sandbox.pr_demand.demand_analytical_base          │
 #   └─────────────────────────────────────────────────────────────────────┘
 #
 # DIMENSÕES DE ANÁLISE:
@@ -54,7 +54,7 @@
 # ÚLTIMA ATUALIZAÇÃO: 2026-08-11
 # ==============================================================================
 
-print("📊 Notebook 5.2 - Refined Demand Analytics carregado.")
+print("📊 Notebook 5.2 - Demand Analytical Base carregado.")
 print("✓ Pronto para processar.")
 
 # COMMAND ----------
@@ -232,14 +232,14 @@ for field in df.schema.fields:
 display(df.limit(5))
 
 # ==============================================================================
-# OUTPUT: refined_demand_analytics
+# OUTPUT: demand_analytical_base
 # ==============================================================================
 # Persiste o DataFrame já mapeado (nomes + tipos) como tabela Delta.
-# Saída: parts_hdbk_sandbox.dt_sales_orders.refined_demand_analytics
+# Saída: parts_hdbk_sandbox.pr_demand.demand_analytical_base
 # Mode: overwrite (tabela é recriada a cada execução)
 # ==============================================================================
 
-TABELA_DESTINO = "parts_hdbk_sandbox.pr_demand.refined_demand_analytics"
+TABELA_DESTINO = "parts_hdbk_sandbox.pr_demand.demand_analytical_base"
 
 df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABELA_DESTINO)
 

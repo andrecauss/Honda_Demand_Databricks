@@ -35,36 +35,39 @@
 #   │ OUTPUT: pr_demand.refined_demand_*_{SEGMENTO}_{CENTRO}              │
 #   │                                                                     │
 #   │ HDA (2W Motos - org_vendas 0200):                                   │
-#   │   • refined_demand_fechada_HDA_{TTL|0203|0209|0232}                 │
-#   │   • refined_demand_fechada_novos_modelos_HDA_{TTL|0203|0209|0232}   │
-#   │   • refined_demand_aberta_HDA_{TTL|0203|0209|0232}                  │
-#   │   • refined_demand_linha_HDA_{TTL|0203|0209|0232}                   │
-#   │   • refined_demand_mi_HDA_{TTL|0203|0209|0232}                      │
-#   │   • refined_demand_me_HDA_TTL                                       │
-#   │   • refined_demand_zpug_HDA_TTL                                     │
-#   │   • refined_demand_zpug_cliente_HDA_TTL                             │
-#   │   • refined_demand_distribuicao_HDA_TTL                             │
+#   │   • refined_demand_fechada_HDA                 │
+#   │   • refined_demand_fechada_sem_zesp_HDA   │
+#   │   • refined_demand_aberta_HDA                  │
+#   │   • refined_demand_linha_HDA                   │
+#   │   • refined_demand_mi_HDA                      │
+#   │   • refined_demand_me_HDA                                       │
+#   │   • refined_demand_me_sem_zesp_HDA                              │
+#   │   • refined_demand_zpug_HDA                                     │
+#   │   • refined_demand_zpug_cliente_HDA                             │
+#   │   • refined_demand_distribuicao_HDA                             │
 #   │                                                                     │
 #   │ HAB (4W Autos - org_vendas 0500):                                   │
-#   │   • refined_demand_fechada_HAB_{TTL|0503|0505}                      │
-#   │   • refined_demand_fechada_novos_modelos_HAB_{TTL|0503|0505}        │
-#   │   • refined_demand_aberta_HAB_{TTL|0503|0505}                       │
-#   │   • refined_demand_linha_HAB_{TTL|0503|0505}                        │
-#   │   • refined_demand_mi_HAB_TTL                                       │
-#   │   • refined_demand_me_HAB_TTL                                       │
-#   │   • refined_demand_zpug_HAB_TTL                                     │
-#   │   • refined_demand_zpug_cliente_HAB_TTL                             │
-#   │   • refined_demand_distribuicao_HAB_TTL                             │
+#   │   • refined_demand_fechada_HAB                      │
+#   │   • refined_demand_fechada_sem_zesp_HAB        │
+#   │   • refined_demand_aberta_HAB                       │
+#   │   • refined_demand_linha_HAB                        │
+#   │   • refined_demand_mi_HAB                                       │
+#   │   • refined_demand_me_HAB                                       │
+#   │   • refined_demand_me_sem_zesp_HAB                              │
+#   │   • refined_demand_zpug_HAB                                     │
+#   │   • refined_demand_zpug_cliente_HAB                             │
+#   │   • refined_demand_distribuicao_HAB                             │
 #   └─────────────────────────────────────────────────────────────────────┘
 #
 # DIMENSÕES DE ANÁLISE:
 #   • Demanda Fechada: agregação por item_principal_cadeia (cadeia de produtos)
-#   • Demanda Fechada Novos Modelos: mesma lógica, excluindo tipo_ov='ZESP'
+#   • Demanda Fechada sem ZESP: mesma lógica da Demanda Fechada, excluindo tipo_ov='ZESP'
 #     (ZESP = Pedido Inicial de Exportação)
 #   • Demanda Aberta: agregação por material (SKU)
 #   • Demanda Linha: contagem de linhas por item_principal_cadeia
 #   • Demanda MI: Mercado Interno (canal_dist='01')
 #   • Demanda ME: Mercado Externo (canal_dist='02')
+#   • Demanda ME sem ZESP: Mercado Externo excluindo tipo_ov='ZESP'
 #   • Pedido ZPUG: ordens tipo 'ZPUG' (Pedido Urgente de Garantia)
 #   • Pedido ZPUG/Cliente: detalhamento por emissor_da_ordem
 #   • Distribuição: análise percentual por centro e mercado (6m centros, 12m mercado)
@@ -104,7 +107,8 @@ print("✓ Pronto para processar segmentos HDA (2W) e HAB (4W).")
 # Janela de análise temporal (em meses)
 # Define quantos meses fechados de histórico serão incluídos na análise
 # Valor padrão: 24 meses (2 anos)
-JANELA_MESES = 24
+#JANELA_MESES = 24
+JANELA_MESES = 91
 
 # Janela específica para "Pedido ZPUG por Cliente" (refined_demand_zpug_cliente_*).
 # Separada de JANELA_MESES porque essa agregação é por cliente x item, então o
@@ -302,15 +306,16 @@ def _pivot(df_filtrado, colunas_grupo, operacao="soma"):
 
 
 TABELAS_BASE = [
-    "refined_demand_fechada",
-    "refined_demand_fechada_novos_modelos",
-    "refined_demand_aberta",
-    "refined_demand_linha",
-    "refined_demand_mi",
-    "refined_demand_me",
-    "refined_demand_zpug",
-    "refined_demand_zpug_cliente",
-    "refined_demand_distribuicao",
+    #refined_demand_fechada",
+    "refined_demand_fechada_sem_zesp",
+    "refined_demand_me_sem_zesp",
+    #"refined_demand_aberta",
+    #"refined_demand_linha",
+    #"refined_demand_mi",
+    #"refined_demand_me",
+    #"refined_demand_zpug",
+    #"refined_demand_zpug_cliente",
+    #"refined_demand_distribuicao",
 ]
 
 
@@ -348,7 +353,7 @@ def _append(df_resultado, tabela):
     
     Args:
         df_resultado (DataFrame): DataFrame a ser persistido
-        tabela (str): Nome da tabela (sem schema, ex: 'refined_demand_fechada_HDA_TTL')
+        tabela (str): Nome da tabela (sem schema, ex: 'refined_demand_fechada_HDA')
     
     Side Effects:
         - Cria ou atualiza tabela Delta em parts_hdbk_sandbox.pr_demand
@@ -415,16 +420,17 @@ _limpar_tabelas()
 #   • 0232 - Manaus (AM)
 #   • TTL  - Total consolidado dos 3 centros
 #
-# Este bloco gera 9 conjuntos de tabelas refinadas:
+# Este bloco gera 10 conjuntos de tabelas refinadas:
 #   1. Demanda Fechada (item_principal_cadeia)
-#   2. Demanda Fechada Novos Modelos (sem tipo_ov='ZESP')
+#   2. Demanda Fechada sem ZESP (tipo_ov != 'ZESP')
 #   3. Demanda Aberta (material/SKU)
 #   4. Demanda Linha (contagem por item_principal_cadeia)
 #   5. Demanda MI - Mercado Interno (canal_dist='01')
 #   6. Demanda ME - Mercado Externo (canal_dist='02')
-#   7. Pedido ZPUG (tipo_ov='ZPUG')
-#   8. Pedido ZPUG por Cliente (tipo_ov='ZPUG' + emissor_da_ordem)
-#   9. Distribuição (análise percentual por centro e mercado)
+#   7. Demanda ME sem ZESP (canal_dist='02' AND tipo_ov != 'ZESP')
+#   8. Pedido ZPUG (tipo_ov='ZPUG')
+#   9. Pedido ZPUG por Cliente (tipo_ov='ZPUG' + emissor_da_ordem)
+#  10. Distribuição (análise percentual por centro e mercado)
 # ==============================================================================
 
 print("🏍️ Iniciando processamento HDA (2W Motos)...")
@@ -439,7 +445,7 @@ print("🏍️ Iniciando processamento HDA (2W Motos)...")
 # Operação: Soma de quantidades
 # Centros: TTL, 0203, 0209, 0232
 # Filtros: org_vendas='0200' (2W Motos)
-# Saída: refined_demand_fechada_HDA_{centro}
+# Saída: refined_demand_fechada_HDA
 # ------------------------------------------------------------------------------
 org_vendas = "0200"
 arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
@@ -447,7 +453,7 @@ arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
 from pyspark.sql.functions import to_date
 df_base = df.filter((df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas))
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_2W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["item_principal_cadeia"])
@@ -455,31 +461,28 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
     
-    # Define sufixo: HDA_TTL, HDA_0203, etc.
-    sufixo = f"HDA_{aba}"
-    tabela_completa = f"refined_demand_fechada_{sufixo}"
+    tabela_completa = "refined_demand_fechada_HDA"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
 
-# DBTITLE 1,HDA Demanda Fechada Novos Modelos
+# DBTITLE 1,HDA Demanda Fechada sem ZESP
 # ------------------------------------------------------------------------------
-# HDA - DEMANDA FECHADA NOVOS MODELOS
+# HDA - DEMANDA FECHADA SEM ZESP
 # ------------------------------------------------------------------------------
 # Agregação: item_principal_cadeia (família de produtos)
 # Operação: Soma de quantidades
 # Centros: TTL, 0203, 0209, 0232
 # Filtros: org_vendas='0200' AND tipo_ov != 'ZESP'
-# Saída: refined_demand_fechada_novos_modelos_HDA_{centro}
-# Nota: Exclui ZESP (Pedido Inicial de Exportação) para isolar demanda de
-#       novos modelos sem pedidos de lançamento em mercados externos de exportação
+# Saída: refined_demand_fechada_sem_zesp_HDA
+# Nota: Exclui tipo_ov='ZESP' (Pedido Inicial de Exportação)
 # ------------------------------------------------------------------------------
 org_vendas = "0200"
-arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
+arquivo = _nome_arquivo(org_vendas, "Demanda Fechada sem ZESP")
 
 df_base = df.filter((df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.tipo_ov != "ZESP"))
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_2W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["item_principal_cadeia"])
@@ -487,9 +490,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
     
-    # Define sufixo: HDA_TTL, HDA_0203, etc.
-    sufixo = f"HDA_{aba}"
-    tabela_completa = f"refined_demand_fechada_novos_modelos_{sufixo}"
+    tabela_completa = "refined_demand_fechada_sem_zesp_HDA"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -502,7 +503,7 @@ for aba in ABAS_2W:
 # Operação: Soma de quantidades
 # Centros: TTL, 0203, 0209, 0232
 # Filtros: org_vendas='0200'
-# Saída: refined_demand_aberta_HDA_{centro}
+# Saída: refined_demand_aberta_HDA
 # Nota: Demanda aberta é detalhada por SKU, não por família
 # ------------------------------------------------------------------------------
 org_vendas = "0200"
@@ -510,7 +511,7 @@ arquivo = _nome_arquivo(org_vendas, "Demanda Aberta")
 
 df_base = df.filter((df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas))
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_2W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["material"])
@@ -518,9 +519,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumnRenamed("material", "Material")
     df_pivot = _reordenar(df_pivot, ["Material"])
     
-    # Define sufixo: HDA_TTL, HDA_0203, etc.
-    sufixo = f"HDA_{aba}"
-    tabela_completa = f"refined_demand_aberta_{sufixo}"
+    tabela_completa = "refined_demand_aberta_HDA"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -533,7 +532,7 @@ for aba in ABAS_2W:
 # Operação: Contagem de linhas (pedidos)
 # Centros: TTL, 0203, 0209, 0232
 # Filtros: org_vendas='0200'
-# Saída: refined_demand_linha_HDA_{centro}
+# Saída: refined_demand_linha_HDA
 # Nota: Mede volume de pedidos, não quantidade solicitada
 # ------------------------------------------------------------------------------
 org_vendas = "0200"
@@ -541,7 +540,7 @@ arquivo = _nome_arquivo(org_vendas, "Demanda Linha")
 
 df_base = df.filter((df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas))
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_2W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["item_principal_cadeia"], operacao="contagem")
@@ -549,9 +548,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
     
-    # Define sufixo: HDA_TTL, HDA_0203, etc.
-    sufixo = f"HDA_{aba}"
-    tabela_completa = f"refined_demand_linha_{sufixo}"
+    tabela_completa = "refined_demand_linha_HDA"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -564,7 +561,7 @@ for aba in ABAS_2W:
 # Operação: Soma de quantidades
 # Centros: TTL, 0203, 0209, 0232
 # Filtros: org_vendas='0200' AND canal_dist='01' (Mercado Interno)
-# Saída: refined_demand_mi_HDA_{centro}
+# Saída: refined_demand_mi_HDA
 # ------------------------------------------------------------------------------
 org_vendas = "0200"
 arquivo = _nome_arquivo(org_vendas, "Demanda MI")
@@ -573,7 +570,7 @@ df_base = df.filter(
     (df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.canal_dist == "01")
 )
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_2W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["item_principal_cadeia"])
@@ -581,9 +578,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
     
-    # Define sufixo: HDA_TTL, HDA_0203, etc.
-    sufixo = f"HDA_{aba}"
-    tabela_completa = f"refined_demand_mi_{sufixo}"
+    tabela_completa = "refined_demand_mi_HDA"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -596,7 +591,7 @@ for aba in ABAS_2W:
 # Operação: Soma de quantidades
 # Centros: TTL apenas (exportação não é segregada por centro)
 # Filtros: org_vendas='0200' AND canal_dist='02' (Mercado Externo)
-# Saída: refined_demand_me_HDA_TTL
+# Saída: refined_demand_me_HDA
 # ------------------------------------------------------------------------------
 org_vendas = "0200"
 arquivo = _nome_arquivo(org_vendas, "Demanda ME")
@@ -605,16 +600,44 @@ df_base = df.filter(
     (df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.canal_dist == "02")
 )
 
-# Processa aba TTL e salva em tabela com sufixo
+# Processa aba TTL e salva na tabela
 aba = "TTL"
 df_pivot = _pivot(df_base, ["item_principal_cadeia"])
 df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
 df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
 df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
 
-# Define sufixo: HDA_TTL
-sufixo = f"HDA_{aba}"
-tabela_completa = f"refined_demand_me_{sufixo}"
+tabela_completa = "refined_demand_me_HDA"
+_append(df_pivot, tabela_completa)
+
+# COMMAND ----------
+
+# DBTITLE 1,HDA Demanda ME sem ZESP
+# ------------------------------------------------------------------------------
+# HDA - DEMANDA ME SEM ZESP (MERCADO EXTERNO SEM ZESP)
+# ------------------------------------------------------------------------------
+# Agregação: item_principal_cadeia (família de produtos)
+# Operação: Soma de quantidades
+# Centros: TTL apenas (exportação não é segregada por centro)
+# Filtros: org_vendas='0200' AND canal_dist='02' AND tipo_ov != 'ZESP'
+# Saída: refined_demand_me_sem_zesp_HDA
+# Nota: Exclui tipo_ov='ZESP' (Pedido Inicial de Exportação)
+# ------------------------------------------------------------------------------
+org_vendas = "0200"
+arquivo = _nome_arquivo(org_vendas, "Demanda ME sem ZESP")
+
+df_base = df.filter(
+    (df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.canal_dist == "02") & (df.tipo_ov != "ZESP")
+)
+
+# Processa aba TTL e salva na tabela
+aba = "TTL"
+df_pivot = _pivot(df_base, ["item_principal_cadeia"])
+df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
+df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
+df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
+
+tabela_completa = "refined_demand_me_sem_zesp_HDA"
 _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -627,7 +650,7 @@ _append(df_pivot, tabela_completa)
 # Operação: Soma de quantidades
 # Centros: TTL apenas (ZPUG não é segregado por centro)
 # Filtros: org_vendas='0200' AND tipo_ov='ZPUG'
-# Saída: refined_demand_zpug_HDA_TTL
+# Saída: refined_demand_zpug_HDA
 # Nota: ZPUG = Pedido Urgente de Garantia (tipo especial de ordem prioritária)
 # ------------------------------------------------------------------------------
 org_vendas = "0200"
@@ -637,16 +660,14 @@ df_base = df.filter(
     (df.data >= data_minima) & (df.org_vendas == org_vendas) & (df.tipo_ov == "ZPUG")
 )
 
-# Processa aba TTL e salva em tabela com sufixo
+# Processa aba TTL e salva na tabela
 aba = "TTL"
 df_pivot = _pivot(df_base, ["item_principal_cadeia"])
 df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
 df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
 df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
 
-# Define sufixo: HDA_TTL
-sufixo = f"HDA_{aba}"
-tabela_completa = f"refined_demand_zpug_{sufixo}"
+tabela_completa = "refined_demand_zpug_HDA"
 _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -659,7 +680,7 @@ _append(df_pivot, tabela_completa)
 # Operação: Soma de quantidades
 # Centros: TTL apenas
 # Filtros: org_vendas='0200' AND tipo_ov='ZPUG'
-# Saída: refined_demand_zpug_cliente_HDA_TTL
+# Saída: refined_demand_zpug_cliente_HDA
 # Nota: Quebra ZPUG (Pedido Urgente de Garantia) por cliente para análise
 #       individualizada de demanda prioritária
 # ------------------------------------------------------------------------------
@@ -670,7 +691,7 @@ df_base = df.filter(
     (df.data >= data_minima_zpug) & (df.org_vendas == org_vendas) & (df.tipo_ov == "ZPUG")
 )
 
-# Processa aba TTL e salva em tabela com sufixo
+# Processa aba TTL e salva na tabela
 aba = "TTL"
 df_pivot = _pivot(df_base, ["emissor_da_ordem", "item_principal_cadeia"])
 df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
@@ -678,9 +699,7 @@ df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal C
 df_pivot = df_pivot.withColumnRenamed("emissor_da_ordem", "Cliente")
 df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia", "Cliente"])
 
-# Define sufixo: HDA_TTL
-sufixo = f"HDA_{aba}"
-tabela_completa = f"refined_demand_zpug_cliente_{sufixo}"
+tabela_completa = "refined_demand_zpug_cliente_HDA"
 _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -700,7 +719,7 @@ from dateutil.relativedelta import relativedelta
 # Períodos:
 #   - Centros: últimos 6 meses (janela móvel)
 #   - Mercado (MI/ME): últimos 12 meses (janela móvel)
-# Saída: refined_demand_distribuicao_HDA_TTL
+# Saída: refined_demand_distribuicao_HDA
 # Colunas finais: DMD_{centro}, %_{centro}, DMD_{MI/ME}, %_{MI/ME}
 # Nota: Permite análise de concentração/distribuição geográfica e de mercado
 # ------------------------------------------------------------------------------
@@ -796,7 +815,7 @@ cols_final_hda = ["file", "sheet", "Item Principal Cadeia"] + dmd_hda + pct_hda 
 resultado_hda = resultado_hda.select(cols_final_hda)
 
 # Salva tabela HDA
-tabela_completa_hda = "refined_demand_distribuicao_HDA_TTL"
+tabela_completa_hda = "refined_demand_distribuicao_HDA"
 _append(resultado_hda, tabela_completa_hda)
 
 # COMMAND ----------
@@ -811,16 +830,17 @@ _append(resultado_hda, tabela_completa_hda)
 #   • 0505 - Jaboatão (PE)
 #   • TTL  - Total consolidado dos 2 centros
 #
-# Este bloco gera 9 conjuntos de tabelas refinadas:
+# Este bloco gera 10 conjuntos de tabelas refinadas:
 #   1. Demanda Fechada (item_principal_cadeia)
-#   2. Demanda Fechada Novos Modelos (sem tipo_ov='ZESP')
+#   2. Demanda Fechada sem ZESP (tipo_ov != 'ZESP')
 #   3. Demanda Aberta (material/SKU)
 #   4. Demanda Linha (contagem por item_principal_cadeia)
 #   5. Demanda MI - Mercado Interno (canal_dist='01')
 #   6. Demanda ME - Mercado Externo (canal_dist='02')
-#   7. Pedido ZPUG (tipo_ov='ZPUG')
-#   8. Pedido ZPUG por Cliente (tipo_ov='ZPUG' + emissor_da_ordem)
-#   9. Distribuição (análise percentual por centro e mercado)
+#   7. Demanda ME sem ZESP (canal_dist='02' AND tipo_ov != 'ZESP')
+#   8. Pedido ZPUG (tipo_ov='ZPUG')
+#   9. Pedido ZPUG por Cliente (tipo_ov='ZPUG' + emissor_da_ordem)
+#  10. Distribuição (análise percentual por centro e mercado)
 # ==============================================================================
 
 print("🚗 Iniciando processamento HAB (4W Automóveis)...")
@@ -835,14 +855,14 @@ print("🚗 Iniciando processamento HAB (4W Automóveis)...")
 # Operação: Soma de quantidades
 # Centros: TTL, 0503, 0505
 # Filtros: org_vendas='0500' (4W Autos)
-# Saída: refined_demand_fechada_HAB_{centro}
+# Saída: refined_demand_fechada_HAB
 # ------------------------------------------------------------------------------
 org_vendas = "0500"
 arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
 
 df_base = df.filter((df.data >= data_minima) & (df.org_vendas == org_vendas))
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_4W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["item_principal_cadeia"])
@@ -850,31 +870,28 @@ for aba in ABAS_4W:
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
     
-    # Define sufixo: HAB_TTL, HAB_0503, etc.
-    sufixo = f"HAB_{aba}"
-    tabela_completa = f"refined_demand_fechada_{sufixo}"
+    tabela_completa = "refined_demand_fechada_HAB"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
 
-# DBTITLE 1,HAB Demanda Fechada Novos Modelos
+# DBTITLE 1,HAB Demanda Fechada sem ZESP
 # ------------------------------------------------------------------------------
-# HAB - DEMANDA FECHADA NOVOS MODELOS
+# HAB - DEMANDA FECHADA SEM ZESP
 # ------------------------------------------------------------------------------
 # Agregação: item_principal_cadeia (família de produtos)
 # Operação: Soma de quantidades
 # Centros: TTL, 0503, 0505
 # Filtros: org_vendas='0500' AND tipo_ov != 'ZESP'
-# Saída: refined_demand_fechada_novos_modelos_HAB_{centro}
-# Nota: Exclui ZESP (Pedido Inicial de Exportação) para isolar demanda de
-#       novos modelos sem pedidos de lançamento em mercados externos
+# Saída: refined_demand_fechada_sem_zesp_HAB
+# Nota: Exclui tipo_ov='ZESP' (Pedido Inicial de Exportação)
 # ------------------------------------------------------------------------------
 org_vendas = "0500"
-arquivo = _nome_arquivo(org_vendas, "Demanda Fechada")
+arquivo = _nome_arquivo(org_vendas, "Demanda Fechada sem ZESP")
 
 df_base = df.filter((df.data >= data_minima) & (df.org_vendas == org_vendas) & (df.tipo_ov != "ZESP"))
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_4W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["item_principal_cadeia"])
@@ -882,9 +899,7 @@ for aba in ABAS_4W:
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
     
-    # Define sufixo: HAB_TTL, HAB_0503, etc.
-    sufixo = f"HAB_{aba}"
-    tabela_completa = f"refined_demand_fechada_novos_modelos_{sufixo}"
+    tabela_completa = "refined_demand_fechada_sem_zesp_HAB"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -897,7 +912,7 @@ for aba in ABAS_4W:
 # Operação: Soma de quantidades
 # Centros: TTL, 0503, 0505
 # Filtros: org_vendas='0500'
-# Saída: refined_demand_aberta_HAB_{centro}
+# Saída: refined_demand_aberta_HAB
 # Nota: Demanda aberta é detalhada por SKU, não por família
 # ------------------------------------------------------------------------------
 org_vendas = "0500"
@@ -905,7 +920,7 @@ arquivo = _nome_arquivo(org_vendas, "Demanda Aberta")
 
 df_base = df.filter((df.data >= data_minima) & (df.org_vendas == org_vendas))
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_4W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["material"])
@@ -913,9 +928,7 @@ for aba in ABAS_4W:
     df_pivot = df_pivot.withColumnRenamed("material", "Material")
     df_pivot = _reordenar(df_pivot, ["Material"])
     
-    # Define sufixo: HAB_TTL, HAB_0503, etc.
-    sufixo = f"HAB_{aba}"
-    tabela_completa = f"refined_demand_aberta_{sufixo}"
+    tabela_completa = "refined_demand_aberta_HAB"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -928,7 +941,7 @@ for aba in ABAS_4W:
 # Operação: Contagem de linhas (pedidos)
 # Centros: TTL, 0503, 0505
 # Filtros: org_vendas='0500'
-# Saída: refined_demand_linha_HAB_{centro}
+# Saída: refined_demand_linha_HAB
 # Nota: Mede volume de pedidos, não quantidade solicitada
 # ------------------------------------------------------------------------------
 org_vendas = "0500"
@@ -936,7 +949,7 @@ arquivo = _nome_arquivo(org_vendas, "Demanda Linha")
 
 df_base = df.filter((df.data >= data_minima) & (df.org_vendas == org_vendas))
 
-# Processa cada aba e salva em tabela separada com sufixo
+# Processa cada aba e salva na mesma tabela
 for aba in ABAS_4W:
     df_aba = df_base if aba == "TTL" else df_base.filter(df_base.centro_original == aba)
     df_pivot = _pivot(df_aba, ["item_principal_cadeia"], operacao="contagem")
@@ -944,9 +957,7 @@ for aba in ABAS_4W:
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
     
-    # Define sufixo: HAB_TTL, HAB_0503, etc.
-    sufixo = f"HAB_{aba}"
-    tabela_completa = f"refined_demand_linha_{sufixo}"
+    tabela_completa = "refined_demand_linha_HAB"
     _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -959,7 +970,7 @@ for aba in ABAS_4W:
 # Operação: Soma de quantidades
 # Centros: TTL apenas (MI não é segregado por centro)
 # Filtros: org_vendas='0500' AND canal_dist='01' (Mercado Interno)
-# Saída: refined_demand_mi_HAB_TTL
+# Saída: refined_demand_mi_HAB
 # ------------------------------------------------------------------------------
 org_vendas = "0500"
 arquivo = _nome_arquivo(org_vendas, "Demanda MI")
@@ -968,16 +979,14 @@ df_base = df.filter(
     (df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.canal_dist == "01")
 )
 
-# Processa aba TTL e salva em tabela com sufixo
+# Processa aba TTL e salva na tabela
 aba = "TTL"
 df_pivot = _pivot(df_base, ["item_principal_cadeia"])
 df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
 df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
 df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
 
-# Define sufixo: HAB_TTL
-sufixo = f"HAB_{aba}"
-tabela_completa = f"refined_demand_mi_{sufixo}"
+tabela_completa = "refined_demand_mi_HAB"
 _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -990,7 +999,7 @@ _append(df_pivot, tabela_completa)
 # Operação: Soma de quantidades
 # Centros: TTL apenas (exportação não é segregada por centro)
 # Filtros: org_vendas='0500' AND canal_dist='02' (Mercado Externo)
-# Saída: refined_demand_me_HAB_TTL
+# Saída: refined_demand_me_HAB
 # ------------------------------------------------------------------------------
 org_vendas = "0500"
 arquivo = _nome_arquivo(org_vendas, "Demanda ME")
@@ -999,16 +1008,44 @@ df_base = df.filter(
     (df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.canal_dist == "02")
 )
 
-# Processa aba TTL e salva em tabela com sufixo
+# Processa aba TTL e salva na tabela
 aba = "TTL"
 df_pivot = _pivot(df_base, ["item_principal_cadeia"])
 df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
 df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
 df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
 
-# Define sufixo: HAB_TTL
-sufixo = f"HAB_{aba}"
-tabela_completa = f"refined_demand_me_{sufixo}"
+tabela_completa = "refined_demand_me_HAB"
+_append(df_pivot, tabela_completa)
+
+# COMMAND ----------
+
+# DBTITLE 1,HAB Demanda ME sem ZESP
+# ------------------------------------------------------------------------------
+# HAB - DEMANDA ME SEM ZESP (MERCADO EXTERNO SEM ZESP)
+# ------------------------------------------------------------------------------
+# Agregação: item_principal_cadeia (família de produtos)
+# Operação: Soma de quantidades
+# Centros: TTL apenas (exportação não é segregada por centro)
+# Filtros: org_vendas='0500' AND canal_dist='02' AND tipo_ov != 'ZESP'
+# Saída: refined_demand_me_sem_zesp_HAB
+# Nota: Exclui tipo_ov='ZESP' (Pedido Inicial de Exportação)
+# ------------------------------------------------------------------------------
+org_vendas = "0500"
+arquivo = _nome_arquivo(org_vendas, "Demanda ME sem ZESP")
+
+df_base = df.filter(
+    (df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.canal_dist == "02") & (df.tipo_ov != "ZESP")
+)
+
+# Processa aba TTL e salva na tabela
+aba = "TTL"
+df_pivot = _pivot(df_base, ["item_principal_cadeia"])
+df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
+df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
+df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
+
+tabela_completa = "refined_demand_me_sem_zesp_HAB"
 _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -1021,7 +1058,7 @@ _append(df_pivot, tabela_completa)
 # Operação: Soma de quantidades
 # Centros: TTL apenas (ZPUG não é segregado por centro)
 # Filtros: org_vendas='0500' AND tipo_ov='ZPUG'
-# Saída: refined_demand_zpug_HAB_TTL
+# Saída: refined_demand_zpug_HAB
 # Nota: ZPUG = Pedido Urgente de Garantia (tipo especial de ordem prioritária)
 # ------------------------------------------------------------------------------
 org_vendas = "0500"
@@ -1031,16 +1068,14 @@ df_base = df.filter(
     (df.data >= to_date(lit(data_minima))) & (df.org_vendas == org_vendas) & (df.tipo_ov == "ZPUG")
 )
 
-# Processa aba TTL e salva em tabela com sufixo
+# Processa aba TTL e salva na tabela
 aba = "TTL"
 df_pivot = _pivot(df_base, ["item_principal_cadeia"])
 df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
 df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
 df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
 
-# Define sufixo: HAB_TTL
-sufixo = f"HAB_{aba}"
-tabela_completa = f"refined_demand_zpug_{sufixo}"
+tabela_completa = "refined_demand_zpug_HAB"
 _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -1053,7 +1088,7 @@ _append(df_pivot, tabela_completa)
 # Operação: Soma de quantidades
 # Centros: TTL apenas
 # Filtros: org_vendas='0500' AND tipo_ov='ZPUG'
-# Saída: refined_demand_zpug_cliente_HAB_TTL
+# Saída: refined_demand_zpug_cliente_HAB
 # Nota: Quebra ZPUG (Pedido Urgente de Garantia) por cliente para análise
 #       individualizada de demanda prioritária
 # ------------------------------------------------------------------------------
@@ -1064,7 +1099,7 @@ df_base = df.filter(
     (df.data >= to_date(lit(data_minima_zpug))) & (df.org_vendas == org_vendas) & (df.tipo_ov == "ZPUG")
 )
 
-# Processa aba TTL e salva em tabela com sufixo
+# Processa aba TTL e salva na tabela
 aba = "TTL"
 df_pivot = _pivot(df_base, ["emissor_da_ordem", "item_principal_cadeia"])
 df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
@@ -1072,9 +1107,7 @@ df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal C
 df_pivot = df_pivot.withColumnRenamed("emissor_da_ordem", "Cliente")
 df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia", "Cliente"])
 
-# Define sufixo: HAB_TTL
-sufixo = f"HAB_{aba}"
-tabela_completa = f"refined_demand_zpug_cliente_{sufixo}"
+tabela_completa = "refined_demand_zpug_cliente_HAB"
 _append(df_pivot, tabela_completa)
 
 # COMMAND ----------
@@ -1094,7 +1127,7 @@ from dateutil.relativedelta import relativedelta
 # Períodos:
 #   - Centros: últimos 6 meses (janela móvel)
 #   - Mercado (MI/ME): últimos 12 meses (janela móvel)
-# Saída: refined_demand_distribuicao_HAB_TTL
+# Saída: refined_demand_distribuicao_HAB
 # Colunas finais: DMD_{centro}, %_{centro}, DMD_{MI/ME}, %_{MI/ME}
 # Nota: Permite análise de concentração/distribuição geográfica e de mercado
 # ------------------------------------------------------------------------------
@@ -1190,7 +1223,7 @@ cols_final_hab = ["file", "sheet", "Item Principal Cadeia"] + dmd_hab + pct_hab 
 resultado_hab = resultado_hab.select(cols_final_hab)
 
 # Salva tabela HAB
-tabela_completa_hab = "refined_demand_distribuicao_HAB_TTL"
+tabela_completa_hab = "refined_demand_distribuicao_HAB"
 _append(resultado_hab, tabela_completa_hab)
 
 # COMMAND ----------
