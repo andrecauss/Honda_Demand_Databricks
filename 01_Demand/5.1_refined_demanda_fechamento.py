@@ -306,16 +306,16 @@ def _pivot(df_filtrado, colunas_grupo, operacao="soma"):
 
 
 TABELAS_BASE = [
-    #refined_demand_fechada",
+    "refined_demand_fechada",
     "refined_demand_fechada_sem_zesp",
+    "refined_demand_aberta",
+    "refined_demand_linha",
+    "refined_demand_mi",
+    "refined_demand_me",
     "refined_demand_me_sem_zesp",
-    #"refined_demand_aberta",
-    #"refined_demand_linha",
-    #"refined_demand_mi",
-    #"refined_demand_me",
-    #"refined_demand_zpug",
-    #"refined_demand_zpug_cliente",
-    #"refined_demand_distribuicao",
+    "refined_demand_zpug",
+    "refined_demand_zpug_cliente",
+    "refined_demand_distribuicao",
 ]
 
 
