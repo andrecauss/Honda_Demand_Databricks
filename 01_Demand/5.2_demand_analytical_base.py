@@ -29,15 +29,17 @@
 #                            │
 #                            v
 #   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ OUTPUT: parts_hdbk_sandbox.pr_demand.demand_analytical_base          │
+#   │ OUTPUT: parts_hdbk_sandbox._agents_databases.demand_analytical_base   │
 #   └─────────────────────────────────────────────────────────────────────┘
 #
 # DIMENSÕES DE ANÁLISE:
 #   • Temporal: data_ordem (date) — janela configurável via JANELA_MESES
-#   • Produto: codigo_material, familia_produto (item_principal_cadeia)
+#   • Produto: codigo_material, item_principal_cadeia
+#   • Pedido: numero_ordem_venda, item_ordem_venda (chave de negócio)
 #   • Cliente: codigo_cliente, cliente (razão social), uf_cliente, pais_cliente
 #   • Canal: organizacao_vendas, canal_distribuicao
 #   • Distribuição: centro_fornecedor, centro_distribuicao_original
+#   • Derivadas: segmento (2W/4W), mercado (Doméstico/Exportação), centro_nome
 #
 # CONVENÇÕES:
 #   • Colunas de saída em snake_case padronizado (ver MAPEAMENTO_CAMPOS)
@@ -51,7 +53,7 @@
 #   a cada execução (mode=overwrite + overwriteSchema=true).
 #
 # AUTOR: Andre Causs - Honda Peças - Planejamento
-# ÚLTIMA ATUALIZAÇÃO: 2026-08-11
+# ÚLTIMA ATUALIZAÇÃO: 2026-09-03
 # ==============================================================================
 
 print("📊 Notebook 5.2 - Demand Analytical Base carregado.")
@@ -142,6 +144,7 @@ spark.sql(f"""
 CREATE OR REPLACE TEMP VIEW vw_sales_orders AS
 SELECT
   rso.numero_ov,
+  rso.item,
   rso.data,
   rso.tipo_ov,
   rso.org_vendas,
@@ -154,7 +157,20 @@ SELECT
   k.cen AS centro_original,
   kna.razao_social,
   kna.estado,
-  kna.pais
+  kna.pais,
+  CASE WHEN rso.org_vendas = '0200' THEN '2W - Motos'
+       WHEN rso.org_vendas = '0500' THEN '4W - Automóveis'
+  END AS segmento,
+  CASE WHEN rso.canal_dist = '01' THEN 'Doméstico'
+       WHEN rso.canal_dist = '02' THEN 'Exportação'
+  END AS mercado,
+  CASE rso.centro
+    WHEN '0203' THEN 'Sumaré 2W'
+    WHEN '0503' THEN 'Sumaré 4W'
+    WHEN '0209' THEN 'Jaboatão 2W'
+    WHEN '0505' THEN 'Jaboatão 4W'
+    WHEN '0232' THEN 'Manaus 2W'
+  END AS centro_nome
 FROM parts_hdbk_sandbox.dt_sales_orders.raw_sales_order rso
 LEFT JOIN parts_hdbk_sandbox.pr_cadastrao.material_cadeia mc
   ON rso.material = mc.material
@@ -189,6 +205,7 @@ from pyspark.sql.functions import col
 MAPEAMENTO_CAMPOS = {
     # campo_original        : (novo_nome,                      tipo_destino)
     "numero_ov":            ("numero_ordem_venda",             "string"),
+    "item":                 ("item_ordem_venda",               "string"),
     "data":                 ("data_ordem",                     "date"),
     "tipo_ov":              ("tipo_ordem_venda",               "string"),
     "org_vendas":           ("organizacao_vendas",             "string"),
@@ -197,11 +214,14 @@ MAPEAMENTO_CAMPOS = {
     "centro":               ("centro_fornecedor",              "string"),
     "material":             ("codigo_material",                "string"),
     "quantidade":           ("quantidade",                     "int"),
-    "item_principal_cadeia": ("familia_produto",               "string"),
+    "item_principal_cadeia": ("item_principal_cadeia",          "string"),
     "centro_original":      ("centro_distribuicao_original",   "string"),
     "razao_social":         ("cliente",                        "string"),
     "estado":               ("uf_cliente",                     "string"),
     "pais":                 ("pais_cliente",                   "string"),
+    "segmento":             ("segmento",                       "string"),
+    "mercado":              ("mercado",                        "string"),
+    "centro_nome":          ("centro_nome",                    "string"),
 }
 
 # ==============================================================================
@@ -235,11 +255,11 @@ display(df.limit(5))
 # OUTPUT: demand_analytical_base
 # ==============================================================================
 # Persiste o DataFrame já mapeado (nomes + tipos) como tabela Delta.
-# Saída: parts_hdbk_sandbox.pr_demand.demand_analytical_base
+# Saída: parts_hdbk_sandbox._agents_databases.demand_analytical_base
 # Mode: overwrite (tabela é recriada a cada execução)
 # ==============================================================================
 
-TABELA_DESTINO = "parts_hdbk_sandbox.pr_demand.demand_analytical_base"
+TABELA_DESTINO = "parts_hdbk_sandbox._agents_databases.demand_analytical_base"
 
 df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABELA_DESTINO)
 
