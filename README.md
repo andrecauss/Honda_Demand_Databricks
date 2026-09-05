@@ -81,6 +81,7 @@ evolução planejada, mas ainda não possuem implementação neste repositório.
 | --- | --- | --- |
 | `2.1_ingest_refined_material_cadastrao` | Consolida o cadastro atual de materiais | `material_cadastrao` |
 | `2.2_ingest_refined_material_stock_snapshot` | Registra o snapshot mensal de estoque e preço | `material_inventory_history` |
+| `migrations/001_migrate_inventory_price_float_to_decimal` | Converte uma tabela existente de `FLOAT` para `DECIMAL(18,2)` | Migração única |
 | `2.3_ingest_refined_material_historical` | Mantém o histórico SCD Type 2 e arquiva os arquivos | `material_historical` |
 | `3.1_ingest_refined_material_cadeia` | Define o item principal da cadeia | `material_cadeia` |
 | `4.1_ingest_customer_knvv_sap` | Consolida atributos comerciais de clientes | `knvv_sap` |
@@ -108,6 +109,18 @@ Execute uma única vez para criar a tabela histórica de ordens de venda:
 ```
 
 Depois utilize o fluxo recorrente.
+
+### Migração do preço de estoque
+
+Em ambientes nos quais `material_inventory_history` já existe com o preço em
+`FLOAT`, execute uma única vez, antes da nova versão do notebook 2.2:
+
+```text
+migrations/001_migrate_inventory_price_float_to_decimal
+```
+
+A migração valida perda de precisão, reescreve a tabela como `DECIMAL(18,2)` e
+restaura a versão Delta anterior automaticamente se a validação final falhar.
 
 ### Fluxo recorrente
 
