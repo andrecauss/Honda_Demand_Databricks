@@ -3,35 +3,16 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
-# DBTITLE 1,Bootstrap Raw Sales Order Data from SAP Parquet Files
 
-# =============================================================================
-# Projeto........: Parts Handbook
-# Notebook.......: 00_nb_sales_order_ingestion
-# Camada.........: raw
-# Objetivo.......: Realizar a carga histórica da Sales Order a partir dos
-#                  arquivos Parquet exportados do SAP, aplicando a
-#                  padronização dos dados e inicializando a tabela
-#                  raw_sales_order.
-#
-# Desenvolvedor..: André Causs
-# Criado em......: 25/07/2026
-#
-# Premissas
-# -----------------------------------------------------------------------------
-# • Arquivos históricos em formato Parquet.
-# • Carga inicial (bootstrap) da camada RAW.
-# • Normalização dos nomes de colunas.
-# • Inclusão de metadados de origem e auditoria.
-# • Persistência em Delta Lake utilizando overwrite.
-# • Execução única, sem Structured Streaming.
-#
-# Histórico de Alterações
-# -----------------------------------------------------------------------------
-# Data       Autor          Versão  Descrição
-# ---------- -------------- ------- --------------------------------------------
-# 25/07/2026 André Causs    1.0.0   Criação da estrutura inicial.
-# =============================================================================
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # 99 — Carga histórica de ordens de venda
+# MAGIC
+# MAGIC - **Propósito:** Inicializar `raw_sales_order` a partir do histórico Parquet do SAP.
+# MAGIC - **Entrada:** Arquivos Parquet de ordens de venda históricas
+# MAGIC - **Saída:** `parts_hdbk_sandbox.dt_sales_orders.raw_sales_order`
+# MAGIC - **Chave:** numero_ov + item · **Carga:** Bootstrap completo, execução excepcional
 
 # COMMAND ----------
 

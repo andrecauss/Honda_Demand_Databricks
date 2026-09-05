@@ -3,6 +3,19 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # 5.2 — Base analítica de demanda
+# MAGIC
+# MAGIC - **Propósito:** Disponibilizar ordens de venda enriquecidas em uma base analítica unificada.
+# MAGIC - **Entradas:** `raw_sales_order`, `material_cadeia`, `knvv_sap` e `kna1_sap`
+# MAGIC - **Saída:** `_agents_databases.demand_analytical_base`
+# MAGIC - **Granularidade:** Item da ordem de venda · **Carga:** Completa
+
+# COMMAND ----------
+
 # DBTITLE 1,⚙️ Parâmetros Configuráveis
 # ==============================================================================
 # PARÂMETROS CONFIGURÁVEIS
@@ -44,20 +57,20 @@ if data_max:
         data_referencia = datetime.strptime(data_max, "%Y-%m-%d")
     else:
         data_referencia = data_max
-    
+
     ano = data_referencia.year
     mes = data_referencia.month
-    
+
     # Calcula data_minima: primeiro dia do mês que inicia a janela de JANELA_MESES fechados
     # Ex: se último mês é junho/2026 e JANELA_MESES=48, então julho/2022 até junho/2026
     data_minima_dt = data_referencia - relativedelta(months=JANELA_MESES - 1)
     # Pega o primeiro dia do mês resultante
     data_minima_dt = data_minima_dt.replace(day=1)
     data_minima = data_minima_dt.strftime("%Y-%m-%d")
-    
+
     # Define como variável Python para uso em células SQL via substituição
     # (spark.conf.set só aceita chaves pré-definidas do Spark)
-    
+
     print(f"📅 Data de referência (mais recente): {data_referencia.strftime('%Y-%m-%d')}")
     print(f"📅 Ano: {ano}, Mês: {mes}")
     print(f"📅 Data mínima ({JANELA_MESES} meses atrás): {data_minima}")
@@ -82,7 +95,7 @@ else:
 # ==============================================================================
 
 # Usa f-string Python para garantir interpolação correta do parâmetro data_minima
-spark.sql(f"""  
+spark.sql(f"""
 CREATE OR REPLACE TEMP VIEW vw_sales_orders AS
 SELECT
   rso.numero_ov,
@@ -93,7 +106,7 @@ SELECT
   rso.canal_dist,
   rso.emissor_da_ordem,
   rso.centro,
-  rso.material,  
+  rso.material,
   rso.quantidade,
   COALESCE(mc.item_principal_cadeia, rso.material) AS item_principal_cadeia,
   k.cen AS centro_original,

@@ -1,46 +1,11 @@
 # Databricks notebook source
-# DBTITLE 1,Propósito do Notebook
-# ==============================================================================
-# NOTEBOOK METADATA
-# ==============================================================================
-
-import sys
-sys.path.insert(0, "/Workspace/Users/andre_causs@honda.com.br/Honda_Demand_Databricks")
-from utils.notebook_meta import criar_metadata_template, exibir_metadata
-
-NOTEBOOK_META = criar_metadata_template(
-    notebook="2.3 - Ingest Refined Material Historical (SCD2)",
-    proposito=(
-        "Manter histórico de mudanças no cadastro mestre de materiais SAP "
-        "utilizando Slowly Changing Dimension Type 2 (SCD2) com Hash Comparison."
-    ),
-    inputs=["/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/"],
-    outputs=[
-        "parts_hdbk_sandbox.pr_cadastrao.material_historical",
-        "parts_hdbk_sandbox._agents_databases.material_historical",
-        "Arquivos movidos para .../history/",
-    ],
-)
-NOTEBOOK_META["transformacoes"] = [
-    "Sanitização de nomes de colunas (remoção de acentos/especiais)",
-    "Hash SHA-256 dos 8 campos rastreados (detecção de mudanças)",
-    "MERGE SCD2: INSERT novos + UPDATE alterados + exclusão lógica",
-    "Movimentação de arquivos processados para history/",
-]
-NOTEBOOK_META["dimensoes"] = {
-    "chave_negocio": "empresa + material + centro",
-    "campos_rastreados": "intercambiabilidade, item_principal_cadeia, data_cadeia, cut_in/off, cadeia, modelo_comercial, status_compra",
-    "controle_temporal": "start_date, end_date, is_current",
-}
-NOTEBOOK_META["dependencias"] = ["pyspark.sql.functions", "re", "unicodedata", "os", "uuid", "datetime"]
-NOTEBOOK_META["convencoes"] = [
-    "Detecção de mudança via SHA-256 hash",
-    "Carga inicial: start_date = 1900-01-01 (sentinel)",
-    "Exclusão lógica: chave ausente → end_date + is_current=false",
-]
-NOTEBOOK_META["execucao"] = "Executar sequencialmente. Encerra se não houver arquivos. Após SCD2, move para history/."
-
-exibir_metadata(NOTEBOOK_META)
+# MAGIC %md
+# MAGIC # 2.3 — Histórico de materiais (SCD2)
+# MAGIC
+# MAGIC - **Propósito:** Manter o histórico das alterações do cadastro mestre de materiais.
+# MAGIC - **Entrada:** `pr_cadastrao/sap_cadastraorefinado/current`
+# MAGIC - **Saídas:** `pr_cadastrao.material_historical` e `_agents_databases.material_historical`
+# MAGIC - **Chave:** Empresa + Material + Centro · **Carga:** Mensal, SCD Type 2
 
 # COMMAND ----------
 

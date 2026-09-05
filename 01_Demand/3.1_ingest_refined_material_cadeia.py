@@ -3,6 +3,19 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # 3.1 — Cadeia de materiais
+# MAGIC
+# MAGIC - **Propósito:** Definir o item principal da cadeia de substituição de cada material.
+# MAGIC - **Entrada:** `pr_cadastrao.material_cadastrao`
+# MAGIC - **Saída:** `pr_cadastrao.material_cadeia`
+# MAGIC - **Chave:** Empresa + Material · **Carga:** Completa
+
+# COMMAND ----------
+
 # DBTITLE 1,Imports e Função de Limpeza de Sufixo
 from pyspark.sql import functions as F
 
@@ -14,11 +27,11 @@ def clean_material_suffix(col, empresa_col):
     Regras:
       - Empresa 0200: remove " C" (espaço(s) + C) no final
       - Empresa 0500: remove " C" ou " G" (espaço(s) + C/G) no final
-    
+
     Args:
         col: Coluna Spark contendo o valor a ser limpo
         empresa_col: Coluna Spark contendo o código da empresa
-    
+
     Returns:
         Coluna Spark com sufixo removido conforme regra
     """

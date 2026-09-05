@@ -1,4 +1,14 @@
 # Databricks notebook source
+# MAGIC %md
+# MAGIC # 6.1 — Exportação da demanda para CSV
+# MAGIC
+# MAGIC - **Propósito:** Exportar as tabelas do schema de demanda para arquivos CSV.
+# MAGIC - **Entrada:** `parts_hdbk_sandbox.pr_demand`
+# MAGIC - **Saída:** Arquivos CSV no volume de exportação
+# MAGIC - **Carga:** Sob demanda
+
+# COMMAND ----------
+
 # DBTITLE 1,List tables in schema
 # List all tables in the schema
 tables = spark.sql("SHOW TABLES IN parts_hdbk_sandbox.pr_demand").collect()
@@ -19,14 +29,14 @@ for table_name in table_names:
         # Read table
         full_table_name = f"parts_hdbk_sandbox.pr_demand.{table_name}"
         df = spark.table(full_table_name)
-        
+
         # Export to CSV
         output_path = f"{volume_path}/{table_name}.csv"
         df.coalesce(1).write.mode("overwrite").option("header", "true").csv(output_path)
-        
+
         row_count = df.count()
         print(f"✓ Exported {table_name}: {row_count} rows -> {output_path}")
-        
+
     except Exception as e:
         print(f"✗ Error exporting {table_name}: {str(e)}")
 
@@ -52,36 +62,36 @@ for folder in csv_folders:
     # Get the table name from the folder name (remove .csv/ suffix)
     table_name = folder.name.replace('.csv/', '')
     folder_path = folder.path
-    
+
     try:
         # List files in the folder
         files = dbutils.fs.ls(folder_path)
-        
+
         # Find the part-*.csv file (ignore _SUCCESS and other metadata files)
         csv_file = None
         for file in files:
             if file.name.startswith('part-') and file.name.endswith('.csv'):
                 csv_file = file.path
                 break
-        
+
         if csv_file:
             # New file name at the root level
             new_file_path = f"{volume_path}/{table_name}.csv.tmp"
-            
+
             # Copy the file to the root level
             dbutils.fs.cp(csv_file, new_file_path)
-            
+
             # Remove the folder
             dbutils.fs.rm(folder_path, recurse=True)
-            
+
             # Rename to final name
             final_file_path = f"{volume_path}/{table_name}.csv"
             dbutils.fs.mv(new_file_path, final_file_path)
-            
+
             print(f"✓ Reorganized {table_name}.csv")
         else:
             print(f"✗ No CSV file found in {table_name} folder")
-            
+
     except Exception as e:
         print(f"✗ Error reorganizing {table_name}: {str(e)}")
 
@@ -118,14 +128,14 @@ if result.returncode == 0:
         capture_output=True,
         text=True
     )
-    
+
     contents_result = subprocess.run(
         f"tar -tzf {archive_path} | wc -l",
         shell=True,
         capture_output=True,
         text=True
     )
-    
+
     print(f"✓ Archive created successfully!")
     print(f"\nFile: {archive_name}")
     print(f"Location: {archive_path}")

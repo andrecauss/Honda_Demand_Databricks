@@ -3,6 +3,19 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # 7.1 — Compactação dos arquivos de demanda
+# MAGIC
+# MAGIC - **Propósito:** Reunir os arquivos exportados em um pacote ZIP para distribuição.
+# MAGIC - **Entrada:** Arquivos da pasta de saída do orquestrador
+# MAGIC - **Saída:** `historical_demand_YYYY-MM-DD.zip`
+# MAGIC - **Carga:** Sob demanda
+
+# COMMAND ----------
+
 # DBTITLE 1,Zip arquivos da pasta out/
 import os
 import zipfile

@@ -23,72 +23,22 @@ O usuário segue a arquitetura **raw/trusted/refined**:
 
 ### 📄 Estrutura de Célula Inicial
 
-**OBRIGATÓRIO**: Todo notebook deve começar com uma **célula Python** (não Markdown) de propósito completa seguindo este template:
+Todo notebook deve começar com uma célula Markdown curta e estática. Ela deve
+informar título, propósito, entradas, saídas, chave ou granularidade e modo de
+carga. Não usar imports, impressão ou código executável apenas para documentar.
 
-**IMPORTANTE**: A célula inicial DEVE ser do tipo Python com comentários (#), NUNCA uma célula Markdown (%md). Isso garante melhor versionamento no Git e facilita buscas por texto.
+```markdown
+# 2.3 — Histórico de materiais (SCD2)
 
-```python
-# ==============================================================================
-# NOTEBOOK: [Número] - [Nome Descritivo]
-# ==============================================================================
-#
-# PROPÓSITO:
-#   [Descrição clara e concisa do que o notebook faz, incluindo contexto de
-#   negócio e por que ele existe]
-#
-# ARQUITETURA:
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ INPUT: [fonte1], [fonte2], [fonte3]                                 │
-#   └────────────────────────┬────────────────────────────────────────────┘
-#                            │
-#                            v
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ TRANSFORMAÇÃO:                                                      │
-#   │   • [Transformação 1]                                               │
-#   │   • [Transformação 2]                                               │
-#   │   • [Transformação 3]                                               │
-#   └────────────────────────┬────────────────────────────────────────────┘
-#                            │
-#                            v
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ OUTPUT: [destino1], [destino2]                                      │
-#   └─────────────────────────────────────────────────────────────────────┘
-#
-# DIMENSÕES DE ANÁLISE:
-#   • [Dimensão 1]: [Descrição]
-#   • [Dimensão 2]: [Descrição]
-#   • [Dimensão 3]: [Descrição]
-#
-# CONVENÇÕES:
-#   • [Convenção de nomenclatura 1]
-#   • [Convenção de nomenclatura 2]
-#   • [Formato de dados]
-#
-# DEPENDÊNCIAS:
-#   • [biblioteca1]
-#   • [biblioteca2]
-#   • [serviço externo]
-#
-# EXECUÇÃO:
-#   [Instruções de como executar o notebook]
-#
-# AUTOR: [Nome] - [Departamento] - [Divisão]
-# ÚLTIMA ATUALIZAÇÃO: [YYYY-MM-DD]
-# ==============================================================================
-
-print("📊 Notebook [Nome] carregado.")
-print("✓ Pronto para processar.")
+- **Propósito:** Manter o histórico das alterações do cadastro de materiais.
+- **Entrada:** `pr_cadastrao.material_cadastrao`
+- **Saída:** `pr_cadastrao.material_historical`
+- **Chave:** Empresa + Material + Centro · **Carga:** Mensal, SCD Type 2
 ```
 
-### 🔑 Elementos Essenciais da Célula Inicial:
-
-1. **PROPÓSITO** - O "por quê" do notebook existe
-2. **ARQUITETURA** - Fluxo visual (INPUT → TRANSFORMAÇÃO → OUTPUT)
-3. **DIMENSÕES DE ANÁLISE** - Granularidade e métricas
-4. **CONVENÇÕES** - Nomenclaturas e padrões específicos
-5. **DEPENDÊNCIAS** - Bibliotecas e serviços necessários
-6. **EXECUÇÃO** - Como rodar o notebook
-7. **AUTOR** - Sempre incluir o nome do desenvolvedor
+No formato Databricks Source `.py`, representar essa célula com `# MAGIC %md`.
+Manter regras detalhadas próximas ao código que as implementa e deixar o
+histórico de alterações sob responsabilidade do Git.
 
 ---
 
@@ -658,14 +608,14 @@ SET TBLPROPERTIES (
 - Logging detalhado de execuções
 - Tratamento de erros robusto
 - Documentação inline no código
-- **Preferir comentários Python (`#`) em vez de células Markdown (`%md`)** para melhor versionamento e busca
+- Usar Markdown apenas no cabeçalho; comentários de negócio permanecem próximos ao código
 
 ### Dicas de Produtividade
 
 1. **Use Templates** - Crie snippets para estruturas comuns
 2. **Mantenha Consistência** - Se um notebook usa um padrão, todos devem usar
 3. **Documente Decisões Técnicas** - Explique o raciocínio por trás de escolhas não óbvias
-4. **Evite Comentários Markdown** - Prefira comentários Python para melhor versionamento
+4. **Evite documentação duplicada** - Cada informação deve ter uma fonte oficial
 
 ---
 
@@ -673,14 +623,13 @@ SET TBLPROPERTIES (
 
 Antes de finalizar um notebook, verifique:
 
-- [ ] Célula inicial de propósito completa e atualizada
+- [ ] Célula inicial Markdown curta e atualizada
 - [ ] Todas as funções documentadas com docstrings Google Style
 - [ ] Células de processamento com headers padronizados
 - [ ] Comentários explicam "por quê", não apenas "o quê"
 - [ ] Nomenclaturas consistentes (variáveis, funções, tabelas)
 - [ ] Separadores visuais usados corretamente
 - [ ] Contexto de negócio documentado onde relevante
-- [ ] Autor e data de atualização corretos
 - [ ] Emojis usados para melhorar escaneabilidade (opcional)
 
 ---
@@ -697,7 +646,7 @@ Quando o usuário pedir ajuda com arquitetura de dados, você deve:
 6. **Documentar**: Sempre incluir comentários e documentação adequada seguindo os padrões
 
 **Para notebooks especificamente:**
-- SEMPRE começar com a célula inicial completa
+- Começar com uma célula Markdown curta contendo o contrato do notebook
 - Usar separadores visuais apropriados
 - Documentar células de processamento com headers padronizados
 - Incluir contexto de negócio nos comentários

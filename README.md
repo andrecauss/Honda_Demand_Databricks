@@ -1,337 +1,218 @@
-# 🏍️ Honda Demand Analytics - Databricks
+# Honda Demand Analytics — Databricks
 
-**Sistema de Análise e Apuração de Demanda de Peças**  
-**Divisão:** Honda Peças - Planejamento  
-**Plataforma:** Databricks (Azure)
+Pipeline de dados para ingestão, enriquecimento, apuração e exportação da
+demanda de peças da Honda no Azure Databricks.
 
----
+- **Área responsável:** Demand Planning — Honda Parts Division
+- **Plataforma:** Azure Databricks
+- **Armazenamento:** Delta Lake e Unity Catalog
+- **Catálogo atual:** `parts_hdbk_sandbox`
 
-## 📋 Visão Geral
+## Objetivo
 
-Pipeline de dados end-to-end para processamento, análise e exportação de demanda de peças automotivas da Honda, implementado em Databricks usando arquitetura medalhão (Raw → Trusted → Refined).
+O projeto consolida ordens de venda do SAP com cadastros de materiais e
+clientes para produzir bases históricas de demanda destinadas ao planejamento.
 
-### 🎯 Objetivos
+O fluxo cobre:
 
-* **Consolidar** dados de ordens de venda (SAP) com informações de cadastro, clientes e centros de distribuição
-* **Agregar** demanda por múltiplas dimensões (produto, praça, tipo, temporal)
-* **Exportar** relatórios estruturados para análise de planejamento (Excel/CSV)
-* **Automatizar** pipelines de ingestão e transformação com Delta Lake
+- ingestão incremental de ordens de venda;
+- tratamento e histórico do cadastro de materiais;
+- enriquecimento com cadeia de substituição e dados de clientes;
+- apuração da demanda por segmento, mercado e centro de distribuição;
+- geração de base analítica;
+- exportação para CSV e Excel.
 
----
+## Arquitetura
 
-## 🏗️ Arquitetura
-
-### Camadas de Dados (Medalhão)
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│ RAW (Bronze)                                                     │
-│ • Ordens de venda SAP                                            │
-│ • Dados de cliente (KNVV, KNA1)                                  │
-│ • Arquivos brutos recebidos                                      │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │
-                         v
-┌──────────────────────────────────────────────────────────────────┐
-│ TRUSTED (Silver)                                                 │
-│ • Material Cadastrão (enriquecimento)                            │
-│ • Material Cadeia (hierarquia de produtos)                       │
-│ • Cliente SAP (enriquecimento)                                   │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │
-                         v
-┌──────────────────────────────────────────────────────────────────┐
-│ REFINED (Gold)                                                   │
-│ • refined_demand_*_{HDA|HAB} (por segmento de negócio)           │
-│   - fechada, fechada_sem_zesp, aberta, linha                     │
-│   - mi, me, me_sem_zesp                                          │
-│   - zpug, zpug_cliente, distribuicao                             │
-│ • demand_analytical_base (base analítica unificada)              │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### Fluxo de Processamento
+As camadas lógicas seguem o fluxo Raw → Trusted → Refined. Os nomes físicos dos
+schemas são preservados conforme a estrutura existente do workspace.
 
 ```mermaid
-graph LR
-    A[Arquivos SAP] --> B[1.0 Receive Files]
-    B --> C[1.1 Ingest Raw Sales]
-    C --> D[Enrichment Layer]
-    D --> E[5.1 Refine Demand]
-    D --> E2[5.2 Analytical Base]
-    E --> F[6.1/6.2 Export]
-    F --> G[Excel/CSV Output]
-    G --> H[7.1 Zip Files]
+flowchart TD
+    A["Arquivos SAP"] --> B["Raw: ordens de venda"]
+    A --> C["Trusted: materiais e clientes"]
+    B --> D["Refined: apuração da demanda"]
+    C --> D
+    D --> E["Excel, CSV e base analítica"]
 ```
 
----
+### Principais objetos
 
-## 📂 Estrutura do Projeto
+| Camada lógica | Schema ou objeto | Conteúdo |
+| --- | --- | --- |
+| Raw | `dt_sales_orders.raw_sales_order` | Ordens de venda do SAP |
+| Trusted | `pr_cadastrao.material_cadastrao` | Cadastro atual de materiais |
+| Trusted | `pr_cadastrao.material_inventory_history` | Snapshots mensais de estoque |
+| Trusted | `pr_cadastrao.material_historical` | Histórico SCD2 de materiais |
+| Trusted | `pr_cadastrao.material_cadeia` | Item principal da cadeia de materiais |
+| Trusted | `dm_customers.knvv_sap` | Atributos comerciais dos clientes |
+| Trusted | `dm_customers.kna1_sap` | Dados gerais dos clientes |
+| Refined | `pr_demand.refined_demand_*` | Visões consolidadas de demanda |
+| Refined | `_agents_databases.demand_analytical_base` | Base analítica por item da ordem |
 
-```
+## Estrutura do repositório
+
+```text
 Honda_Demand_Databricks/
-├── 01_Demand/            ← Pipeline de demanda (ativo)
-├── 02_CadFechamento/     ← Cadastro e Fechamento (planejado)
-├── 03_Baseline/          ← Baseline de previsão (planejado)
-├── 04_Forecast/          ← Forecast (planejado)
-├── skills/               ← Skills do assistente
+├── 01_Demand/                     # Pipeline ativo de demanda
+│   └── notebook_architecture_standards.md
+├── skills/
+│   └── arquiteto-de-dados/        # Instruções de arquitetura do projeto
 └── README.md
 ```
 
-## 📂 Estrutura de Notebooks
+Os domínios `02_CadFechamento`, `03_Baseline` e `04_Forecast` fazem parte da
+evolução planejada, mas ainda não possuem implementação neste repositório.
 
-### 🔵 1. Ingestão (Raw Layer)
+## Notebooks
 
-| Notebook | Propósito | Input | Output |
-|----------|-----------|-------|--------|
-| `1.0_receive_and_move_files` | Recebe e organiza arquivos brutos | Storage externo | `/raw/files/` |
-| `1.1_ingest_raw_sales_order` | Ingestão de ordens de venda | Arquivos SAP | `raw_sales_order` |
+### Entrada e ordens de venda
 
-### 🟢 2. Enriquecimento (Trusted Layer)
+| Notebook | Função | Modo |
+| --- | --- | --- |
+| `1.0_receive_and_move_files` | Direciona arquivos recebidos conforme o prefixo | Sob demanda |
+| `1.1_ingest_raw_sales_order` | Mantém `raw_sales_order` via Auto Loader e MERGE | Incremental |
+| `99_ingest_raw_sales_order_historical` | Inicializa a RAW a partir do histórico Parquet | Bootstrap excepcional |
+| `99_nb_sales_order_support_functions` | Remove manualmente um período para reprocessamento | Manutenção ad hoc |
 
-| Notebook | Propósito | Input | Output |
-|----------|-----------|-------|--------|
-| `2.1_ingest_refined_material_cadastrao` | Cadastro base de materiais | Planilhas mestre | `material_cadastrao` |
-| `3.1_ingest_refined_material_cadeia` | Hierarquia de produtos | Cadeia SAP | `material_cadeia` |
-| `4.1_ingest_customer_knvv_sap` | Dados de vendas do cliente | SAP KNVV | `knvv_sap` |
-| `4.2_ingest_customer_kna1_sap` | Dados mestre do cliente | SAP KNA1 | `kna1_sap` |
+### Materiais e clientes
 
-### 🟡 3. Processamento (Refined Layer)
+| Notebook | Função | Saída principal |
+| --- | --- | --- |
+| `2.1_ingest_refined_material_cadastrao` | Consolida o cadastro atual de materiais | `material_cadastrao` |
+| `2.2_ingest_refined_material_stock_snapshot` | Registra o snapshot mensal de estoque e preço | `material_inventory_history` |
+| `2.3_ingest_refined_material_historical` | Mantém o histórico SCD Type 2 e arquiva os arquivos | `material_historical` |
+| `3.1_ingest_refined_material_cadeia` | Define o item principal da cadeia | `material_cadeia` |
+| `4.1_ingest_customer_knvv_sap` | Consolida atributos comerciais de clientes | `knvv_sap` |
+| `4.2_ingest_customer_kna1_sap` | Consolida dados gerais de clientes | `kna1_sap` |
 
-| Notebook | Propósito | Janela Temporal | Output |
-|----------|-----------|-----------------|--------|
-| `5.1_refined_demanda_fechamento` | Apuração principal (v2 consolidado) | 60 meses (configurável) | `refined_demand_*_{HDA\|HAB}` |
-| `OLD_5.1_refined_demanda_fechamento` | Apuração v1 (legado, usa spark.conf) | 48 meses fixos | `refined_demand_*` |
-| `5.2_demand_analytical_base` | Base analítica unificada | 60 meses (configurável) | `demand_analytical_base` |
-| `7.1_zip_exported_demand_files` | Compacta exportações em ZIP | N/A | Arquivo `.zip` no Volume |
+### Processamento e saída
 
-### 🔴 4. Exportação
+| Notebook | Função | Situação |
+| --- | --- | --- |
+| `5.1_refined_demanda_fechamento` | Produz as tabelas `refined_demand_*` | Principal |
+| `5.2_demand_analytical_base` | Produz a base analítica unificada | Opcional |
+| `6.1_export_demand_to_csv` | Exporta tabelas para CSV | Alternativo |
+| `6.2_export_demand_to_xlsx_v2` | Gera workbooks Excel com múltiplas abas | Recomendado |
+| `6.2_export_demand_to_xlsx` | Exportador Excel anterior | Legado |
+| `7.1_zip_exported_demand_files` | Compacta os arquivos de saída | Opcional |
 
-| Notebook | Propósito | Formato | Observações |
-|----------|-----------|---------|-------------|
-| `6.1_export_demand_to_csv.py` | Exportação CSV | CSV | Volumes grandes |
-| `6.2_export_demand_to_xlsx.py` | Exportação Excel v1 | XLSX | Uma aba por praça |
-| `6.2_export_demand_to_xlsx_v2.py` | Exportação Excel v2 | XLSX | Multi-sheet otimizado |
+## Ordem de execução
 
----
+### Primeira implantação
 
-## 🔧 Tecnologias
+Execute uma única vez para criar a tabela histórica de ordens de venda:
 
-* **Plataforma:** Databricks (Azure)
-* **Compute:** Serverless (default) / All-Purpose Clusters
-* **Storage:** Delta Lake
-* **Linguagens:** Python 3.x, SQL, Shell
-* **Bibliotecas:** 
-  * PySpark (processamento distribuído)
-  * Pandas (manipulação local)
-  * openpyxl/xlsxwriter (exportação Excel)
-  * python-dateutil (manipulação de datas)
+```text
+99_ingest_raw_sales_order_historical
+```
 
----
+Depois utilize o fluxo recorrente.
 
-## 🚀 Como Executar
+### Fluxo recorrente
 
-### Pré-requisitos
+```text
+1.0_receive_and_move_files             # Quando houver arquivos no orquestrador
+1.1_ingest_raw_sales_order             # Ordens de venda incrementais
 
-1. **Workspace Databricks** configurado
-2. **Unity Catalog** ativo
-3. **Schema destino:** `parts_hdbk_sandbox.pr_demand`
-4. **Permissões:** READ nas tabelas raw/trusted, WRITE no schema refined
-
-### Ordem de Execução
-
-```bash
-# 1. Ingestão de ordens de venda (mensal)
-1.0_receive_and_move_files
-1.1_ingest_raw_sales_order
-
-# 2. Enriquecimento (sob demanda / semanal)
-2.1_ingest_refined_material_cadastrao
+2.1_ingest_refined_material_cadastrao  # Cadastro atual
+2.2_ingest_refined_material_stock_snapshot
+2.3_ingest_refined_material_historical # Executar após 2.2; move os arquivos
 3.1_ingest_refined_material_cadeia
 4.1_ingest_customer_knvv_sap
 4.2_ingest_customer_kna1_sap
 
-# 3. Processamento de demanda (mensal)
-5.1_refined_demanda_fechamento     # Versão principal (v2 consolidado)
-5.2_demand_analytical_base         # Base analítica (opcional)
+5.1_refined_demanda_fechamento
+5.2_demand_analytical_base             # Opcional
 
-# 4. Exportação (sob demanda)
-6.2_export_demand_to_xlsx_v2       # Excel recomendado
-7.1_zip_exported_demand_files      # Compactação ZIP (opcional)
+6.2_export_demand_to_xlsx_v2           # Exportação recomendada
+7.1_zip_exported_demand_files          # Opcional
 ```
 
-### Configurações Importantes
+Em um job automatizado, as dependências devem impedir a execução das etapas de
+processamento quando uma carga anterior falhar.
 
-**5.1 - Janelas Temporais:**
+## Configurações principais
+
+As configurações estão atualmente declaradas nos próprios notebooks.
+
 ```python
-JANELA_MESES = 60              # Demanda geral (60 meses / 5 anos)
-JANELA_MESES_ZPUG_CLI = 12     # ZPUG por Cliente (12 meses)
+JANELA_MESES = 60
+JANELA_MESES_ZPUG_CLI = 12
 ```
 
-**Schema Unity Catalog:**
-```sql
-CATALOG: parts_hdbk_sandbox
-SCHEMA: pr_demand
-```
+| Código | Significado |
+| --- | --- |
+| Organização `0200` | HDA — 2W |
+| Organização `0500` | HAB — 4W |
+| Canal `01` | Mercado interno |
+| Canal `02` | Mercado externo |
 
----
+### Centros de distribuição
 
-## 📊 Dimensões de Análise
+| Segmento | Centros |
+| --- | --- |
+| HDA — 2W | `0203`, `0209`, `0232` |
+| HAB — 4W | `0503`, `0505` |
+| Consolidado | `TTL` |
 
-### Segmentação de Mercado
+## Visões de demanda
 
-* **HDA (Honda da Amazônia)** - Org Vendas: 0200
-* **HAB (Honda Automóveis do Brasil)** - Org Vendas: 0300
+| Visão | Definição resumida |
+| --- | --- |
+| Fechada | Quantidade agrupada pelo item principal da cadeia |
+| Fechada sem ZESP | Demanda fechada excluindo pedidos `ZESP` |
+| Aberta | Quantidade preservada no material original |
+| Linha | Contagem de linhas pelo item principal da cadeia |
+| MI | Demanda do canal de mercado interno |
+| ME | Demanda do canal de mercado externo |
+| ME sem ZESP | Mercado externo excluindo pedidos `ZESP` |
+| ZPUG | Pedidos urgentes de garantia |
+| ZPUG por cliente | Pedidos ZPUG detalhados pelo emissor da ordem |
+| Distribuição | Demanda por centro e canal de vendas |
 
-### Praças (Centros de Distribuição)
+## Padrão dos notebooks
 
-* **TTL** - Consolidado Brasil
-* **0203** - Sumaré-SP (2W)
-* **0209** - Jaboatão dos Guararapes-PE (2W)
-* **0232** - Manaus-AM (2W)
-* **0503** - Sumaré-SP (4W)
-* **0505** - Jaboatão dos Guararapes-PE (4W)
+Cada notebook começa com uma célula Markdown curta contendo:
 
+- propósito;
+- entradas;
+- saídas;
+- chave ou granularidade;
+- modo ou frequência da carga.
 
-### Tipos de Demanda
+O cabeçalho é estático: não importa módulos, não imprime documentação e não
+interfere na execução. Regras detalhadas permanecem próximas ao código que as
+implementa.
 
-| Tipo | Descrição | Uso |
-|------|-----------|-----|
-| **Fechada** | Pedidos agrupados por item principal da cadeia | Planejamento geral |
-| **Fechada sem ZESP** | Mesma lógica, excluindo tipo_ov='ZESP' | Remove pedidos iniciais de exportação |
-| **Aberta** | Pedidos sem agrupamento (por SKU) | Intenção original de compra |
-| **Linha** | Contagem de linhas por item principal da cadeia | Volume de pedidos por produto |
-| **MI** | Mercado Interno (canal_dist='01') | Demanda doméstica |
-| **ME** | Mercado Externo (canal_dist='02') | Demanda de exportação |
-| **ME sem ZESP** | Mercado Externo excluindo tipo_ov='ZESP' | Exportação sem pedidos iniciais |
-| **ZPUG** | Pedido Urgente de Garantia | Planejamento geral |
-| **ZPUG/Cliente** | ZPUG detalhado por emissor da ordem | Análise de garantia por cliente |
-| **Distribuição** | Por centro e por canal de vendas | Análise estratégica para Forecast |
+Consulte o documento
+[`01_Demand/notebook_architecture_standards.md`](01_Demand/notebook_architecture_standards.md)
+para o padrão completo e o checklist.
 
----
+## Uso de recursos
 
-## 📐 Padrões de Código
+Para reduzir consumo e esforço operacional:
 
-Este projeto segue os **Padrões de Arquitetura Databricks** documentados em:
+- evite `display()` em jobs automáticos;
+- não repita `count()` sobre o mesmo DataFrame sem necessidade;
+- limite operações que coletam dados no driver, como `toPandas()`;
+- prefira logs curtos de início, resultado e falha;
+- instale dependências antes de criar estado no notebook;
+- mantenha parâmetros operacionais agrupados;
+- use o exportador Excel v2 para o fluxo atual.
 
-📘 [`notebook_architecture_standards.md`](notebook_architecture_standards.md)
+## Pré-requisitos
 
-### Convenções
+- workspace Azure Databricks com Unity Catalog;
+- acesso ao catálogo `parts_hdbk_sandbox`;
+- leitura nos schemas de origem;
+- criação e modificação nas tabelas de destino;
+- acesso aos volumes usados pelas ingestões e exportações.
 
-* ✅ **Célula inicial completa** (PROPÓSITO → ARQUITETURA → OUTPUT)
-* ✅ **Docstrings Google-style** em todas as funções
-* ✅ **Nomenclatura snake_case** (Python/SQL)
-* ✅ **Separadores visuais** para seções
-* ✅ **Comentários de negócio** explicando o "por quê"
+## Manutenção
 
----
+O Git é a fonte oficial do histórico de alterações. O README descreve o estado
+atual do pipeline e não mantém um changelog duplicado.
 
-## 🔄 Reorganização Recente
-
-Notebooks renomeados/consolidados:
-
-* ✅ `5.1_v2` → consolidado em `5.1_refined_demanda_fechamento` (versão principal)
-* ✅ `5.1` (v1 original) → renomeado para `OLD_5.1_refined_demanda_fechamento`
-* ✅ `5.2_refined_demanda_ai_agent` → renomeado para `5.2_demand_analytical_base`
-
-Notebooks adicionados:
-
-* ✅ `7.1_zip_exported_demand_files` — compacta exportações em ZIP
-
-Notebooks legados (mantidos para referência):
-
-* 📦 `99_ingest_raw_sales_order_historical` (importação histórica one-time)
-* 📦 `99_nb_sales_order_support_functions` (funções de suporte)
-
-Pastas de arquivo:
-
-* 📁 `_old_2026_08`, `_old_2026-08-10` — versões anteriores arquivadas
-
----
-
-## 🛡️ Boas Práticas
-
-### Compute Serverless
-
-* ⚠️ **Não usar `spark.conf.set()`** em SQL direto (use widgets/parâmetros)
-* ✅ **Preferir `5.1_refined_demanda_fechamento`** (compatível serverless) ao invés do `OLD_5.1`
-
-### Delta Lake
-
-* ✅ **OPTIMIZE + ZORDER** em colunas de filtro frequente (`data`, `org_vendas`)
-* ✅ **Vacuum** periódico (retenção 7 dias)
-
-### Performance
-
-* ✅ **Broadcast joins** em tabelas pequenas (`material_cadeia`, `kna1_sap`)
-* ✅ **Partition by** data em tabelas raw/refined
-* ✅ **Cache** em DataFrames reutilizados
-
----
-
-## 🐛 Troubleshooting
-
-### Problema: "Compute serverless não suporta spark.conf"
-
-**Solução:** Usar `5.1_refined_demanda_fechamento` (versão consolidada) ao invés do `OLD_5.1`.
-
-### Problema: "Exportação Excel ultrapassa limite de linhas"
-
-**Solução:** Ajustar `JANELA_MESES_ZPUG_CLI` para 12 meses no notebook 5.1.
-
-### Problema: "Tabela refined não encontrada"
-
-**Solução:** Verificar execução prévia do 5.1 e permissões no schema:
-```sql
-GRANT SELECT, MODIFY ON SCHEMA parts_hdbk_sandbox.pr_demand TO `user@domain.com`;
-```
-
----
-
-## 📝 Changelog
-
-### [2026-09-03] - Consolidação e Nova Base Analítica
-
-**Adicionado:**
-* `5.2_demand_analytical_base` — base analítica unificada com mapeamento padronizado
-* `7.1_zip_exported_demand_files` — compactação ZIP das exportações
-* Novas pastas de projeto: `02_CadFechamento`, `03_Baseline`, `04_Forecast`
-
-**Alterado:**
-* `5.1_v2` consolidado como `5.1_refined_demanda_fechamento` (versão principal)
-* V1 original renomeado para `OLD_5.1_refined_demanda_fechamento`
-* `5.2_refined_demanda_ai_agent` → `5.2_demand_analytical_base`
-* Janela temporal ampliada de 24 para 60 meses (5 anos de histórico)
-* Tabelas de saída segmentadas por negócio: sufixo `_HDA` (2W) e `_HAB` (4W)
-* Novos tipos de demanda: Fechada sem ZESP, Linha, ME sem ZESP, ZPUG/Cliente
-
-### [2026-08-09] - Refatoração Estrutural
-
-**Adicionado:**
-* Nova versão `5.1_v2` com janelas temporais configuráveis
-* Janela específica de 12 meses para ZPUG por Cliente
-* Exportador Excel v2 (`6.2_v2`) com melhor performance
-
-**Alterado:**
-* Janela temporal geral reduzida de 48 para 24 meses (performance)
-* Convertidos notebooks críticos para `.py` (melhor diff em Git)
-
-**Removido:**
-* Notebooks históricos e de suporte legado (`99_*`)
-* Versões `.ipynb` duplicadas (mantidas apenas `.py`)
-
----
-
-## 👤 Contato
-
-**Autor:** André Causs  
-**Departamento:** Demand Planning  
-**Divisão:** Honda Parts Division  
-**Email:** andrecauss@gmail.com; andrecauss88@gmail.com; andre_causs@honda.com.br
-
----
-
-## 📄 Licença
-
-Uso interno - Honda Parts Division  
-© 2026 Honda Motor Co., Ltd.
+- **Responsável:** André Causs — Demand Planning
+- **Uso:** Interno — Honda Parts Division
