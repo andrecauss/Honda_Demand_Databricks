@@ -53,7 +53,7 @@ flowchart TD
 ## Estrutura do repositório
 
 ```text
-Honda_Demand_Databricks/
+honda-demand-databricks/
 ├── 01_Demand/                     # Pipeline ativo de demanda
 │   └── notebook_architecture_standards.md
 ├── skills/
