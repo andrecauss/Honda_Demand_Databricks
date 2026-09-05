@@ -269,9 +269,29 @@ def normalize_decimal_string(column_name: str):
     )
 
 
+def normalize_integer_string(column_name: str):
+    """Normaliza quantidades inteiras, inclusive com separador de milhar."""
+    raw_value = F.regexp_replace(
+        F.trim(F.col(column_name).cast("string")),
+        r"[\s\u00A0]",
+        "",
+    )
+
+    return F.when(
+        raw_value.rlike(r"^-?\d{1,3}([.,]\d{3})+$"),
+        F.regexp_replace(raw_value, r"[.,]", ""),
+    ).otherwise(normalize_decimal_string(column_name))
+
+
 parsed_columns = {
-    f"__parsed_{column_name}": normalize_decimal_string(column_name).cast("decimal(38,6)")
-    for column_name in INTEGER_COLUMNS + FLOAT_COLUMNS
+    **{
+        f"__parsed_{column_name}": normalize_integer_string(column_name).cast("decimal(38,6)")
+        for column_name in INTEGER_COLUMNS
+    },
+    **{
+        f"__parsed_{column_name}": normalize_decimal_string(column_name).cast("decimal(38,6)")
+        for column_name in FLOAT_COLUMNS
+    },
 }
 parsed_df = inventory_source_df.withColumns(parsed_columns)
 
