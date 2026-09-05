@@ -1,30 +1,56 @@
 # Databricks notebook source
 # DBTITLE 1,Propósito do Notebook
-# MAGIC %md
-# MAGIC # Snapshot Mensal de Estoque de Materiais
-# MAGIC
-# MAGIC **Camada**: Refined  
-# MAGIC **Objetivo**: Capturar snapshot mensal de estoques, quantidades e preços de materiais SAP.  
-# MAGIC **Modelo**: Append-only — um registro por chave de negócio por mês (sem overwrite).
-# MAGIC
-# MAGIC ## Premissas
-# MAGIC
-# MAGIC * Arquivos Excel (.xlsx) no Volume UC, mesma fonte do notebook SCD2 (2.2)
-# MAGIC * Chave: `empresa` + `material` + `centro` + `reference_date`
-# MAGIC * `reference_date` extraída do nome do arquivo (padrão `CAD{centro}_{yyyy}.{MM}.xlsx`)
-# MAGIC * Proteção contra duplicatas: se `reference_date` já existe na tabela, a inserção é ignorada
-# MAGIC * Campos numéricos convertidos para INT (estoques/quantidades) e FLOAT (preços)
-# MAGIC * Coluna calculada `stock_total` = soma dos 5 tipos de estoque físico
-# MAGIC * Este notebook **não move** arquivos para history/ — isso é responsabilidade do notebook SCD2 (2.2)
-# MAGIC
-# MAGIC ## Fonte e Destino
-# MAGIC
-# MAGIC **Fonte**: `/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/`  
-# MAGIC **Destino**: `parts_hdbk_sandbox.pr_cadastrao.material_inventory_history`
+# ==============================================================================
+# NOTEBOOK METADATA
+# ==============================================================================
+
+import sys
+sys.path.insert(0, "/Workspace/Users/andre_causs@honda.com.br/Honda_Demand_Databricks")
+from utils.notebook_meta import criar_metadata_template, exibir_metadata
+
+NOTEBOOK_META = criar_metadata_template(
+    notebook="2.2 - Ingest Refined Material Stock Snapshot",
+    proposito=(
+        "Captura snapshot mensal de estoques, quantidades e preços de materiais SAP "
+        "na camada Refined. Modelo append-only: um registro por chave de negócio "
+        "por mês, sem overwrite de dados existentes."
+    ),
+    inputs=["/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/"],
+    outputs=["parts_hdbk_sandbox.pr_cadastrao.material_inventory_history"],
+)
+NOTEBOOK_META["transformacoes"] = [
+    "Sanitização de nomes de colunas (remoção de acentos/especiais)",
+    "Conversão de tipos (INT para estoques, FLOAT para preços)",
+    "Cálculo de stock_total (soma de 5 tipos de estoque físico)",
+    "Extração de reference_date do nome do arquivo",
+    "Proteção contra duplicatas por reference_date",
+]
+NOTEBOOK_META["dimensoes"] = {
+    "chave": "empresa + material + centro + reference_date",
+    "granularidade": "Um snapshot por material/centro/mês",
+    "metricas": "estoques (7 tipos), preço líquido, stock_total",
+}
+NOTEBOOK_META["dependencias"] = ["pyspark.sql.functions", "re", "unicodedata", "os", "uuid", "datetime"]
+NOTEBOOK_META["convencoes"] = [
+    "reference_date extraída do padrão CAD{centro}_{yyyy}.{MM}.xlsx",
+    "stock_total = livre + bloqueado + trânsito + terceiros + qualidade",
+    "Este notebook NÃO move arquivos para history/ (responsabilidade do 2.3)",
+]
+NOTEBOOK_META["execucao"] = "Executar sequencialmente. Encerra automaticamente se não houver arquivos."
+
+exibir_metadata(NOTEBOOK_META)
 
 # COMMAND ----------
 
 # DBTITLE 1,Guarda: verificar arquivos em current/
+# ==============================================================================
+# GUARDA: VERIFICAR ARQUIVOS EM CURRENT/
+# ==============================================================================
+# Verifica a existência de arquivos Excel no diretório de entrada antes de
+# prosseguir. Encerra o notebook com exit code "NO_FILES" se vazio,
+# evitando execução desnecessária das células subsequentes.
+# ==============================================================================
+
 import os
 
 SOURCE_DIR = "/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/"
@@ -40,10 +66,35 @@ else:
 # COMMAND ----------
 
 # DBTITLE 1,Função de Sanitização de Colunas
+# ------------------------------------------------------------------------------
+# FUNÇÃO AUXILIAR: SANITIZAÇÃO DE NOMES DE COLUNAS
+# ------------------------------------------------------------------------------
+# Necessária porque os arquivos Excel SAP contêm headers com acentuação
+# e espaços, incompatíveis com nomes de colunas Delta/Spark.
+# ------------------------------------------------------------------------------
+
 import re
 import unicodedata
 
+
 def sanitize_col_name(name):
+    """
+    Sanitiza nome de coluna para compatibilidade com Spark/Delta.
+
+    Remove acentos via normalização NFKD, converte para lowercase e
+    substitui caracteres inválidos por underscore.
+
+    Args:
+        name (str): Nome original da coluna (pode conter acentos,
+            espaços e caracteres especiais).
+
+    Returns:
+        str: Nome sanitizado em snake_case ASCII.
+
+    Example:
+        >>> sanitize_col_name("Preço de Venda Líquida")
+        'preco_de_venda_liquida'
+    """
     if not name:
         return "col_unknown"
     nfkd = unicodedata.normalize('NFKD', name)
@@ -55,6 +106,14 @@ def sanitize_col_name(name):
 # COMMAND ----------
 
 # DBTITLE 1,Leitura dos arquivos Excel (.xlsx)
+# ==============================================================================
+# LEITURA DOS ARQUIVOS EXCEL (.xlsx)
+# ==============================================================================
+# Carrega todos os arquivos Excel do diretório current/ com inferSchema
+# desabilitado (todas as colunas como STRING) para preservar zeros à
+# esquerda em códigos SAP. Extrai metadados de arquivo para rastreabilidade.
+# ==============================================================================
+
 df_raw = (spark.read
     .format("excel")
     .option("header", "true")
@@ -73,6 +132,15 @@ print(f"Arquivos fonte detectados: {source_file_names}")
 # COMMAND ----------
 
 # DBTITLE 1,Tratamento de header e sanitização de colunas
+# ==============================================================================
+# TRATAMENTO DE HEADER E SANITIZAÇÃO DE COLUNAS
+# ==============================================================================
+# Quando múltiplos arquivos Excel são carregados, o reader pode não aplicar
+# o header corretamente (colunas _c0, _c1...). Este bloco detecta essa
+# situação, extrai nomes da primeira linha, sanitiza e remove linhas de
+# cabeçalho duplicadas provenientes de cada arquivo .xlsx.
+# ==============================================================================
+
 first_col = df_raw.columns[0]
 
 if first_col.startswith("_c"):
@@ -117,6 +185,16 @@ print(f"DataFrame final: {df.count()} linhas, {len(df.columns)} colunas")
 # COMMAND ----------
 
 # DBTITLE 1,Snapshot mensal de inventário
+# ==============================================================================
+# SNAPSHOT MENSAL DE INVENTÁRIO
+# ==============================================================================
+# Agregação: empresa + material + centro (dedup por chave)
+# Operação: Conversão de tipos, cálculo de stock_total, INSERT append-only
+# Filtros: Proteção contra duplicatas por reference_date já existente
+# Saída: parts_hdbk_sandbox.pr_cadastrao.material_inventory_history
+# Nota: reference_date extraída do padrão CAD{centro}_{yyyy}.{MM}.xlsx
+# ==============================================================================
+
 from pyspark.sql import functions as F
 from datetime import datetime
 import uuid
@@ -233,6 +311,14 @@ else:
 # COMMAND ----------
 
 # DBTITLE 1,Metadados da tabela de inventário
+# ==============================================================================
+# METADADOS DA TABELA DE INVENTÁRIO
+# ==============================================================================
+# Aplica comentários de tabela e colunas, tags de governança e
+# propriedades de negócio na tabela material_inventory_history.
+# Garante rastreabilidade e documentação no Unity Catalog.
+# ==============================================================================
+
 INVENTORY_COMMENT = """
 Snapshot mensal de estoques e preços de materiais SAP.
 

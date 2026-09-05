@@ -3,61 +3,6 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
-# DBTITLE 1,Propósito do Notebook
-# ==============================================================================
-# NOTEBOOK: 99 - Carga Histórica de Sales Order (bootstrap)
-# ==============================================================================
-#
-# PROPÓSITO:
-#   Carga ÚNICA (bootstrap) da camada raw a partir dos arquivos Parquet
-#   históricos exportados do SAP. Inicializa raw_sales_order do zero, com
-#   metadados de auditoria, comentários de coluna, tags de Unity Catalog e
-#   tblproperties de governança.
-#
-# ARQUITETURA:
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ INPUT: /Volumes/parts_hdbk_sandbox/dt_sales_orders/                 │
-#   │        sap_sales_order/historical/*.parquet (recursivo)             │
-#   └────────────────────────┬────────────────────────────────────────────┘
-#                            │
-#                            v
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ TRANSFORMAÇÃO:                                                      │
-#   │   • Normalização de nomes de coluna (unicodedata + regex)           │
-#   │   • Validação de colunas obrigatórias (RAW_BUSINESS_COLUMNS)        │
-#   │   • Cast de quantidade para decimal(18,3), coalesce para 0          │
-#   │   • Enriquecimento com metadados de origem (_source_*) e auditoria  │
-#   │     (_ingested_at, _load_id, etc.)                                  │
-#   └────────────────────────┬────────────────────────────────────────────┘
-#                            │
-#                            v
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ OUTPUT: parts_hdbk_sandbox.dt_sales_orders.raw_sales_order          │
-#   │   overwrite + overwriteSchema — RECRIA A TABELA DO ZERO             │
-#   │   Também aplica: COMMENT ON TABLE/COLUMN, TAGS, TBLPROPERTIES       │
-#   └─────────────────────────────────────────────────────────────────────┘
-#
-# CONVENÇÕES:
-#   • Chave de negócio: numero_ov + item
-#   • VALIDATE_AFTER_WRITE = False por padrão — habilitar só para auditoria,
-#     pois relê a tabela inteira
-#
-# DEPENDÊNCIAS:
-#   • delta-spark (DeltaTable)
-#
-# EXECUÇÃO:
-#   ⚠️ DESTRUTIVO: overwrite total de raw_sales_order. Rodar apenas para
-#   inicializar a tabela ou refazer o bootstrap — não é o pipeline
-#   incremental do dia a dia (ver 1.1_ingest_raw_sales_order)
-#
-# AUTOR: Andre Causs - Honda Peças - Planejamento
-# ÚLTIMA ATUALIZAÇÃO: 2026-08-09
-# ==============================================================================
-
-print("📊 Notebook 99 - Carga Histórica de Sales Order carregado.")
-
-# COMMAND ----------
-
 # DBTITLE 1,Bootstrap Raw Sales Order Data from SAP Parquet Files
 
 # =============================================================================

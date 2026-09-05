@@ -3,64 +3,6 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
-# DBTITLE 1,Propósito do Notebook
-# ==============================================================================
-# NOTEBOOK: 5.2 - Demand Analytical Base
-# ==============================================================================
-#
-# PROPÓSITO:
-#   Gera a tabela analítica base (demand_analytical_base) a partir das
-#   ordens de venda brutas, enriquecidas com hierarquia de cadeia de produtos
-#   e dados cadastrais de clientes. Aplica mapeamento padronizado de campos
-#   (renomeação + tipagem) antes de persistir.
-#
-# ARQUITETURA:
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ INPUT: raw_sales_order, material_cadeia, knvv_sap, kna1_sap         │
-#   └────────────────────────┬────────────────────────────────────────────┘
-#                            │
-#                            v
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ TRANSFORMAÇÃO:                                                      │
-#   │   • JANELA_MESES define data_minima (dinâmico, via f-string)        │
-#   │   • vw_sales_orders: join de ordens + cadeia + centro + cliente     │
-#   │   • Mapeamento de campos: renomeação padronizada + cast de tipos    │
-#   └────────────────────────┬────────────────────────────────────────────┘
-#                            │
-#                            v
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ OUTPUT: parts_hdbk_sandbox._agents_databases.demand_analytical_base   │
-#   └─────────────────────────────────────────────────────────────────────┘
-#
-# DIMENSÕES DE ANÁLISE:
-#   • Temporal: data_ordem (date) — janela configurável via JANELA_MESES
-#   • Produto: codigo_material, item_principal_cadeia
-#   • Pedido: numero_ordem_venda, item_ordem_venda (chave de negócio)
-#   • Cliente: codigo_cliente, cliente (razão social), uf_cliente, pais_cliente
-#   • Canal: organizacao_vendas, canal_distribuicao
-#   • Distribuição: centro_fornecedor, centro_distribuicao_original
-#   • Derivadas: segmento (2W/4W), mercado (Doméstico/Exportação), centro_nome
-#
-# CONVENÇÕES:
-#   • Colunas de saída em snake_case padronizado (ver MAPEAMENTO_CAMPOS)
-#   • Mesmo padrão de vw_sales_orders do 5.1/5.1_v2
-#
-# DEPENDÊNCIAS:
-#   • python-dateutil (relativedelta)
-#
-# EXECUÇÃO:
-#   Executar todas as células sequencialmente. A tabela de saída é sobrescrita
-#   a cada execução (mode=overwrite + overwriteSchema=true).
-#
-# AUTOR: Andre Causs - Honda Peças - Planejamento
-# ÚLTIMA ATUALIZAÇÃO: 2026-09-03
-# ==============================================================================
-
-print("📊 Notebook 5.2 - Demand Analytical Base carregado.")
-print("✓ Pronto para processar.")
-
-# COMMAND ----------
-
 # DBTITLE 1,⚙️ Parâmetros Configuráveis
 # ==============================================================================
 # PARÂMETROS CONFIGURÁVEIS

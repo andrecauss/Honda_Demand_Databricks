@@ -1,8 +1,8 @@
 # 📘 Padrões de Arquitetura para Notebooks Databricks
 
 **Autor:** André Causs - Demand Planning - Honda Parts Division  
-**Última Atualização:** 2026-08-09  
-**Versão:** 1.0
+**Última Atualização:** 2026-09-05  
+**Versão:** 2.0
 
 ---
 
@@ -32,59 +32,118 @@ Este documento define padrões de arquitetura para notebooks Databricks, garanti
 
 ## 📄 Estrutura de Célula Inicial
 
-Todo notebook deve começar com uma célula de propósito completa:
+Todo notebook deve começar com **duas células**: um dicionário `NOTEBOOK_META` com toda a
+documentação estruturada, e o import do módulo compartilhado que exibe e valida o metadata.
+
+O módulo compartilhado vive em `Honda_Demand_Databricks/utils/notebook_meta.py` e expõe:
+
+| Função | Descrição |
+| --- | --- |
+| `criar_metadata_template()` | Gera um NOTEBOOK_META pré-preenchido (autor, data, listas vazias) |
+| `exibir_metadata(meta)` | Renderiza o metadata formatado no console |
+| `validar_metadata(meta)` | Checa chaves obrigatórias, tipos e chaves desconhecidas |
+| `metadata_to_dict(meta)` | Normaliza para JSON/serialização (linhagem futura) |
+
+### 📝 Célula 1: NOTEBOOK_META
 
 ```python
 # ==============================================================================
-# NOTEBOOK: [Número] - [Nome Descritivo]
-# ==============================================================================
-#
-# PROPÓSITO:
-#   [Descrição clara e concisa do que o notebook faz, incluindo contexto de
-#   negócio e por que ele existe]
-#
-# ARQUITETURA:
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ INPUT: [fonte1], [fonte2], [fonte3]                                 │
-#   └────────────────────────┬────────────────────────────────────────────┘
-#                            │
-#                            v
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ TRANSFORMAÇÃO:                                                      │
-#   │   • [Transformação 1]                                               │
-#   │   • [Transformação 2]                                               │
-#   │   • [Transformação 3]                                               │
-#   └────────────────────────┬────────────────────────────────────────────┘
-#                            │
-#                            v
-#   ┌─────────────────────────────────────────────────────────────────────┐
-#   │ OUTPUT: [destino1], [destino2]                                      │
-#   └─────────────────────────────────────────────────────────────────────┘
-#
-# DIMENSÕES DE ANÁLISE:
-#   • [Dimensão 1]: [Descrição]
-#   • [Dimensão 2]: [Descrição]
-#   • [Dimensão 3]: [Descrição]
-#
-# CONVENÇÕES:
-#   • [Convenção de nomenclatura 1]
-#   • [Convenção de nomenclatura 2]
-#   • [Formato de dados]
-#
-# DEPENDÊNCIAS:
-#   • [biblioteca1]
-#   • [biblioteca2]
-#   • [serviço externo]
-#
-# EXECUÇÃO:
-#   [Instruções de como executar o notebook]
-#
-# AUTOR: [Nome] - [Departamento] - [Divisão]
-# ÚLTIMA ATUALIZAÇÃO: [YYYY-MM-DD]
+# NOTEBOOK METADATA
 # ==============================================================================
 
-print("📊 Notebook [Nome] carregado.")
-print("✓ Pronto para processar.")
+import sys
+sys.path.insert(0, "/Workspace/Users/andre_causs@honda.com.br/Honda_Demand_Databricks")
+
+from utils.notebook_meta import criar_metadata_template, exibir_metadata
+
+NOTEBOOK_META = criar_metadata_template(
+    notebook="5.1 - Demand Refinement",
+    proposito=(
+        "Agrega e refina dados brutos de ordens de venda em tabelas analíticas "
+        "segmentadas por canal, centro de distribuição e família de produtos."
+    ),
+    inputs=["raw_sales_order", "material_cadeia", "knvv_sap", "kna1_sap"],
+    outputs=[
+        "refined_demand_fechada_*",
+        "refined_demand_aberta_*",
+        "refined_demand_linha_*",
+        "refined_distribuicao_*",
+    ],
+)
+
+# --- Campos opcionais (customize conforme necessário) ---
+NOTEBOOK_META["transformacoes"] = [
+    "Enriquecimento com hierarquia de cadeia (material → família)",
+    "Agregação por item_principal_cadeia e material",
+    "Pivot temporal (mês/ano → colunas)",
+    "Segmentação por org_vendas, canal_dist e tipo_ov",
+]
+NOTEBOOK_META["dimensoes"] = {
+    "item_principal_cadeia": "Família de produtos (agrupador de SKUs)",
+    "centro_original": "Centro de distribuição (0203, 0209, 0232)",
+    "org_vendas": "Organização de vendas (0200=2W, 0500=4W)",
+    "canal_dist": "Canal de distribuição (01=MI, 02=ME)",
+}
+NOTEBOOK_META["dependencias"] = ["pyspark.sql", "datetime"]
+NOTEBOOK_META["execucao"] = "Executar Run All. Requer tabelas raw_* já populadas."
+
+exibir_metadata(NOTEBOOK_META)
+```
+
+### 🚀 Atalho para notebooks novos
+
+Para criar um notebook do zero, basta chamar `criar_metadata_template()` com os
+argumentos mínimos — ela já preenche autor, data e todas as listas vazias:
+
+```python
+NOTEBOOK_META = criar_metadata_template(
+    notebook="7.2 - Novo Pipeline",
+    proposito="Descrição do propósito aqui.",
+    inputs=["tabela_fonte"],
+    outputs=["tabela_destino"],
+)
+exibir_metadata(NOTEBOOK_META)
+```
+
+### 🖥️ Saída no console
+
+```
+======================================================================
+  📘 5.1 - Demand Refinement
+======================================================================
+
+  PROPÓSITO:
+    Agrega e refina dados brutos de ordens de venda em tabelas analíticas
+    segmentadas por canal, centro de distribuição e família de produtos.
+
+  ARQUITETURA:
+    INPUT:  raw_sales_order, material_cadeia, knvv_sap, kna1_sap
+      │
+      ▼
+    • Enriquecimento com hierarquia de cadeia (material → família)
+    • Agregação por item_principal_cadeia e material
+    • Pivot temporal (mês/ano → colunas)
+    • Segmentação por org_vendas, canal_dist e tipo_ov
+      │
+      ▼
+    OUTPUT: refined_demand_fechada_*, refined_demand_aberta_*, ...
+
+  DIMENSÕES DE ANÁLISE:
+    • item_principal_cadeia: Família de produtos (agrupador de SKUs)
+    • centro_original: Centro de distribuição (0203, 0209, 0232)
+    • org_vendas: Organização de vendas (0200=2W, 0500=4W)
+    • canal_dist: Canal de distribuição (01=MI, 02=ME)
+
+  DEPENDÊNCIAS:
+    • pyspark.sql
+    • datetime
+
+  EXECUÇÃO:
+    Executar Run All. Requer tabelas raw_* já populadas.
+
+  AUTOR: André Causs - Demand Planning - Honda Parts Division
+  ATUALIZADO: 2026-08-09
+======================================================================
 ```
 
 ### 🔑 Elementos Essenciais:
@@ -403,23 +462,21 @@ Antes de finalizar um notebook, verifique:
 
 ## 🚀 Dicas de Produtividade
 
-### 1️⃣ Use Templates
+### 1️⃣ Use o Arquiteto
 
-Crie snippets para estruturas comuns:
+Nunca comece um notebook do zero — use `criar_metadata_template()` para gerar
+o esqueleto com autor, data e chaves padrão já preenchidos:
 
 ```python
-# Template de função
-def _funcao_nome():
-    """
-    [Descrição breve]
-    
-    Args:
-        param (type): descrição
-    
-    Returns:
-        type: descrição
-    """
-    pass
+from utils.notebook_meta import criar_metadata_template, exibir_metadata
+
+NOTEBOOK_META = criar_metadata_template(
+    notebook="8.1 - Novo Notebook",
+    proposito="Descrição aqui.",
+    inputs=["tabela_fonte"],
+    outputs=["tabela_destino"],
+)
+exibir_metadata(NOTEBOOK_META)
 ```
 
 ### 2️⃣ Mantenha Consistência
@@ -457,6 +514,12 @@ Prefira comentários Python (`#`) em vez de células Markdown (`%md`) para:
 ---
 
 ## 📝 Notas de Versão
+
+### v2.0 (2026-09-05)
+- Célula inicial migrada para metadata estruturado (`NOTEBOOK_META` dict)
+- Removido bloco ASCII manual em favor de `criar_metadata_template()`
+- Módulo compartilhado `utils/notebook_meta.py` com exibição e validação automáticas
+- Seção "Dicas" atualizada para referenciar o arquiteto
 
 ### v1.0 (2026-08-09)
 - Versão inicial do guia de padrões

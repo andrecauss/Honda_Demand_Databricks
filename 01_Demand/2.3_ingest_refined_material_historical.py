@@ -1,35 +1,58 @@
 # Databricks notebook source
 # DBTITLE 1,Propósito do Notebook
-# MAGIC %md
-# MAGIC # Histórico de Cadastro de Materiais (SCD2)
-# MAGIC
-# MAGIC **Camada**: Refined  
-# MAGIC **Objetivo**: Manter histórico de mudanças no cadastro mestre de materiais SAP utilizando Slowly Changing Dimension Type 2 (SCD2) com Hash Comparison.
-# MAGIC
-# MAGIC ## Premissas
-# MAGIC
-# MAGIC * Arquivos Excel (.xlsx) no Volume UC
-# MAGIC * **Sem overwrite** — registros são acumulados quando há mudanças em colunas rastreadas ou item aparece pela primeira vez
-# MAGIC * Detecção de mudanças via **SHA-256 hash** dos 8 campos rastreados (evita comparação coluna a coluna)
-# MAGIC * Controle temporal: `start_date`, `end_date`, `is_current`
-# MAGIC * Carga inicial (tabela vazia): `start_date` = `1900-01-01` (sentinel date — histórico real desconhecido)
-# MAGIC * Cargas subsequentes: `start_date` = primeiro dia do mês extraído do nome do arquivo (ex: `CAD0203_2026.04.xls` → `2026-04-01`)
-# MAGIC * Chave de negócio composta: `empresa` + `material` + `centro`
-# MAGIC * Exclusões também são consideradas: se uma chave corrente não retornar no novo arquivo, o registro vigente é encerrado com `end_date` e `is_current = false`
-# MAGIC * Campos não listados no escopo desta implementação **não são importados** e **não são avaliados** para mudança
-# MAGIC * Todas as colunas lidas como STRING para preservar zeros à esquerda
-# MAGIC * Nomes de colunas sanitizados (sem acentos, espaços ou caracteres especiais)
-# MAGIC
-# MAGIC ## Fonte e Destino
-# MAGIC
-# MAGIC **Fonte**: `/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/`  
-# MAGIC **Destino SCD2**: `parts_hdbk_sandbox.pr_cadastrao.material_historical`  
-# MAGIC **Destino SCD2 adicional**: `parts_hdbk_sandbox._agents_databases.material_historical`  
-# MAGIC **Arquivo pós-processamento**: movido para `/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/history/`
+# ==============================================================================
+# NOTEBOOK METADATA
+# ==============================================================================
+
+import sys
+sys.path.insert(0, "/Workspace/Users/andre_causs@honda.com.br/Honda_Demand_Databricks")
+from utils.notebook_meta import criar_metadata_template, exibir_metadata
+
+NOTEBOOK_META = criar_metadata_template(
+    notebook="2.3 - Ingest Refined Material Historical (SCD2)",
+    proposito=(
+        "Manter histórico de mudanças no cadastro mestre de materiais SAP "
+        "utilizando Slowly Changing Dimension Type 2 (SCD2) com Hash Comparison."
+    ),
+    inputs=["/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/"],
+    outputs=[
+        "parts_hdbk_sandbox.pr_cadastrao.material_historical",
+        "parts_hdbk_sandbox._agents_databases.material_historical",
+        "Arquivos movidos para .../history/",
+    ],
+)
+NOTEBOOK_META["transformacoes"] = [
+    "Sanitização de nomes de colunas (remoção de acentos/especiais)",
+    "Hash SHA-256 dos 8 campos rastreados (detecção de mudanças)",
+    "MERGE SCD2: INSERT novos + UPDATE alterados + exclusão lógica",
+    "Movimentação de arquivos processados para history/",
+]
+NOTEBOOK_META["dimensoes"] = {
+    "chave_negocio": "empresa + material + centro",
+    "campos_rastreados": "intercambiabilidade, item_principal_cadeia, data_cadeia, cut_in/off, cadeia, modelo_comercial, status_compra",
+    "controle_temporal": "start_date, end_date, is_current",
+}
+NOTEBOOK_META["dependencias"] = ["pyspark.sql.functions", "re", "unicodedata", "os", "uuid", "datetime"]
+NOTEBOOK_META["convencoes"] = [
+    "Detecção de mudança via SHA-256 hash",
+    "Carga inicial: start_date = 1900-01-01 (sentinel)",
+    "Exclusão lógica: chave ausente → end_date + is_current=false",
+]
+NOTEBOOK_META["execucao"] = "Executar sequencialmente. Encerra se não houver arquivos. Após SCD2, move para history/."
+
+exibir_metadata(NOTEBOOK_META)
 
 # COMMAND ----------
 
 # DBTITLE 1,Guarda: verificar arquivos em current/
+# ==============================================================================
+# GUARDA: VERIFICAR ARQUIVOS EM CURRENT/
+# ==============================================================================
+# Verifica a existência de arquivos Excel no diretório de entrada antes de
+# prosseguir. Encerra o notebook com exit code "NO_FILES" se vazio,
+# evitando execução desnecessária das células subsequentes.
+# ==============================================================================
+
 import os
 
 SOURCE_DIR = "/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/"
@@ -45,14 +68,38 @@ else:
 # COMMAND ----------
 
 # DBTITLE 1,Função de Sanitização de Colunas
+# ------------------------------------------------------------------------------
+# FUNÇÃO AUXILIAR: SANITIZAÇÃO DE NOMES DE COLUNAS
+# ------------------------------------------------------------------------------
+# Necessária porque os arquivos Excel SAP contêm headers com acentuação
+# e espaços, incompatíveis com nomes de colunas Delta/Spark.
+# ------------------------------------------------------------------------------
+
 import re
 import unicodedata
 
-# Função para sanitizar nomes de colunas: remove acentos, converte para lowercase e substitui caracteres inválidos por underscore
+
 def sanitize_col_name(name):
+    """
+    Sanitiza nome de coluna para compatibilidade com Spark/Delta.
+
+    Remove acentos via normalização NFKD, converte para lowercase e
+    substitui caracteres inválidos por underscore.
+
+    Args:
+        name (str): Nome original da coluna (pode conter acentos,
+            espaços e caracteres especiais).
+
+    Returns:
+        str: Nome sanitizado em snake_case ASCII.
+
+    Example:
+        >>> sanitize_col_name("Preço de Venda Líquida")
+        'preco_de_venda_liquida'
+    """
     if not name:
         return "col_unknown"
-    # Remover acentos
+    # Remover acentos via normalização Unicode NFKD
     nfkd = unicodedata.normalize('NFKD', name)
     ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
     # Substituir caracteres inválidos por underscore
@@ -64,7 +111,15 @@ def sanitize_col_name(name):
 # COMMAND ----------
 
 # DBTITLE 1,Leitura dos arquivos Excel (.xlsx)
-# Leitura dos arquivos Excel - todas as colunas como STRING para preservar zeros à esquerda
+# ==============================================================================
+# LEITURA DOS ARQUIVOS EXCEL (.xlsx)
+# ==============================================================================
+# Carrega todos os arquivos Excel do diretório current/ com inferSchema
+# desabilitado (todas as colunas como STRING) para preservar zeros à
+# esquerda em códigos SAP (ex: material "001234", empresa "0200").
+# Extrai metadados de arquivo para determinar data de referência.
+# ==============================================================================
+
 df_raw = (spark.read
     .format("excel")
     .option("header", "true")
@@ -84,7 +139,15 @@ print(f"Arquivos fonte detectados: {source_file_names}")
 # COMMAND ----------
 
 # DBTITLE 1,Tratamento de header e sanitização de colunas
-# Verificar se o header foi aplicado corretamente pelo reader
+# ==============================================================================
+# TRATAMENTO DE HEADER E SANITIZAÇÃO DE COLUNAS
+# ==============================================================================
+# Quando múltiplos arquivos Excel são carregados, o reader pode não aplicar
+# o header corretamente (colunas _c0, _c1...). Este bloco detecta essa
+# situação, extrai nomes da primeira linha, sanitiza e remove linhas de
+# cabeçalho duplicadas provenientes de cada arquivo .xlsx.
+# ==============================================================================
+
 first_col = df_raw.columns[0]
 
 if first_col.startswith("_c"):
@@ -134,52 +197,55 @@ print(f"Primeiras colunas: {df.columns[:10]}")
 # COMMAND ----------
 
 # DBTITLE 1,Escopo de campos SCD2
-# MAGIC %md
-# MAGIC ## Escopo de campos desta implementação
-# MAGIC
-# MAGIC Se um campo não estiver listado abaixo, ele **não será importado** para a nova tabela histórica e **não será avaliado** para mudança.
-# MAGIC
-# MAGIC ### Campos de origem incluídos
-# MAGIC
-# MAGIC * [x] `empresa` — incluído na nova tabela; usado como chave de negócio
-# MAGIC * [x] `material` — incluído na nova tabela; usado como chave de negócio
-# MAGIC * [x] `centro` — incluído na nova tabela; usado como chave de negócio
-# MAGIC * [x] `intercambiabilidade` — incluído na nova tabela; avaliado para mudança
-# MAGIC * [x] `item_principal_cadeia` — incluído na nova tabela; avaliado para mudança
-# MAGIC * [x] `data_cadeia` — incluído na nova tabela; avaliado para mudança
-# MAGIC * [x] `cut_in_material` — incluído na nova tabela; avaliado para mudança
-# MAGIC * [x] `cut_off_material` — incluído na nova tabela; avaliado para mudança
-# MAGIC * [x] `cadeia` — incluído na nova tabela; avaliado para mudança
-# MAGIC * [x] `modelo_comercial_principal` — incluído na nova tabela; avaliado para mudança
-# MAGIC * [x] `status_compra` — incluído na nova tabela; avaliado para mudança
-# MAGIC
-# MAGIC ### Regra adicional de exclusão lógica
-# MAGIC
-# MAGIC * [x] Se `empresa` + `material` + `centro` existir hoje como `is_current = true` e não vier no novo arquivo, a linha vigente será encerrada com `end_date` e `is_current = false`
-# MAGIC
-# MAGIC ### Regra de start_date para primeira aparição
-# MAGIC
-# MAGIC * [x] Se a tabela destino estiver **vazia** (carga inicial), `start_date` = `1900-01-01 00:00:00` — sentinel date indicando que o histórico real é desconhecido
-# MAGIC * [x] Se a tabela já tiver dados e a chave for **genuinamente nova**, `start_date` = primeiro dia do mês extraído do nome do arquivo (ex: `CAD0203_2026.04.xls` → `2026-04-01`)
-# MAGIC * [x] Se a chave já existir e o **hash mudar**, a nova versão recebe `start_date` = primeiro dia do mês do arquivo
-# MAGIC * [x] `end_date` de registros encerrados (alterados ou ausentes) = primeiro dia do mês do novo snapshot
-# MAGIC
-# MAGIC ### Colunas técnicas geradas no destino
-# MAGIC
-# MAGIC * [x] `row_hash` — gerado no notebook; usado para Hash Comparison
-# MAGIC * [x] `start_date` — gerado no notebook; início da vigência do registro (`1900-01-01` na carga inicial)
-# MAGIC * [x] `end_date` — gerado no notebook; fim da vigência do registro
-# MAGIC * [x] `is_current` — gerado no notebook; indicador do registro vigente
-# MAGIC * [x] `_ingested_at` — gerado no notebook; timestamp de ingestão
-# MAGIC * [x] `_last_updated_at` — gerado no notebook; timestamp da última atualização do registro
-# MAGIC * [x] `_ingested_by` — gerado no notebook; usuário executor
-# MAGIC * [x] `_load_type` — gerado no notebook; tipo de carga
-# MAGIC * [x] `_load_id` — gerado no notebook; identificador da execução
-# MAGIC * [x] `_source_file_path` — gerado no notebook; diretório de origem
+# ==============================================================================
+# ESCOPO DE CAMPOS DESTA IMPLEMENTAÇÃO SCD2
+# ==============================================================================
+# Se um campo não estiver listado abaixo, ele NÃO será importado para a
+# tabela histórica e NÃO será avaliado para mudança.
+#
+# CAMPOS DE ORIGEM INCLUÍDOS:
+#   Chave de negócio:
+#     • empresa — chave de negócio
+#     • material — chave de negócio
+#     • centro — chave de negócio
+#   Campos rastreados por mudança (hash SHA-256):
+#     • intercambiabilidade
+#     • item_principal_cadeia
+#     • data_cadeia
+#     • cut_in_material
+#     • cut_off_material
+#     • cadeia
+#     • modelo_comercial_principal
+#     • status_compra
+#
+# REGRAS DE CONTROLE TEMPORAL:
+#   • Carga inicial (tabela vazia): start_date = 1900-01-01 (sentinel)
+#   • Chave nova: start_date = 1º dia do mês do arquivo
+#   • Hash alterado: nova versão com start_date = 1º dia do mês do arquivo
+#   • Chave ausente no novo snapshot: end_date + is_current = false
+#   • end_date de encerrados = 1º dia do mês do novo snapshot
+#
+# COLUNAS TÉCNICAS GERADAS:
+#   • row_hash — SHA-256 para Hash Comparison
+#   • start_date, end_date, is_current — controle temporal SCD2
+#   • _ingested_at, _last_updated_at — timestamps de auditoria
+#   • _ingested_by, _load_type, _load_id, _source_file_path — rastreabilidade
+# ==============================================================================
+
+print("✓ Escopo de campos SCD2 documentado.")
 
 # COMMAND ----------
 
 # DBTITLE 1,Preparar stage SCD2 com hash
+# ==============================================================================
+# PREPARAR STAGE SCD2 COM HASH
+# ==============================================================================
+# Seleciona colunas de negócio, calcula hash SHA-256 dos campos rastreados,
+# adiciona colunas técnicas (start_date, end_date, is_current, auditoria)
+# e valida ausência de versões conflitantes por chave na mesma carga.
+# O resultado é persistido como temp view "vw_material_historical_stage".
+# ==============================================================================
+
 from pyspark.sql import functions as F
 import uuid
 
@@ -310,7 +376,28 @@ display(stage_df.orderBy(*BUSINESS_KEY_COLUMNS).limit(5))
 # COMMAND ----------
 
 # DBTITLE 1,Aplicar SCD2 na tabela principal
+# ==============================================================================
+# APLICAR SCD2 NA TABELA PRINCIPAL
+# ==============================================================================
+# Executa o processo completo de SCD2 via MERGE + UPDATE + INSERT:
+#   1. Cria tabela se não existir (ensure_scd2_table)
+#   2. MERGE: encerra registros com hash alterado (end_date + is_current=false)
+#   3. UPDATE: encerra registros ausentes no novo snapshot (exclusão lógica)
+#   4. INSERT: insere registros novos ou com hash diferente
+# Saída: parts_hdbk_sandbox.pr_cadastrao.material_historical
+# ==============================================================================
+
+
 def ensure_scd2_table(target_table: str) -> None:
+    """
+    Cria a tabela SCD2 Delta se ela não existir.
+
+    Args:
+        target_table (str): Nome completo da tabela (catalog.schema.table).
+
+    Side Effects:
+        Cria tabela Delta com schema SCD2 completo.
+    """
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {target_table} (
             empresa STRING,
@@ -340,6 +427,21 @@ def ensure_scd2_table(target_table: str) -> None:
 
 
 def apply_scd2_merge(target_table: str) -> None:
+    """
+    Aplica o processo completo de SCD2 com Hash Comparison.
+
+    Executa três operações em sequência:
+      1. MERGE: encerra registros vigentes cujo hash mudou
+      2. UPDATE: encerra registros vigentes ausentes no novo snapshot
+      3. INSERT: insere novos registros ou versões alteradas
+
+    Args:
+        target_table (str): Nome completo da tabela alvo (catalog.schema.table).
+
+    Side Effects:
+        Modifica a tabela target_table com operações MERGE/UPDATE/INSERT.
+        Exibe sumário de registros processados no console.
+    """
     ensure_scd2_table(target_table)
 
     changed_candidates = spark.sql(f"""
@@ -445,6 +547,13 @@ print(f"Carga SCD2 concluída na tabela principal: {MAIN_TABLE}")
 # COMMAND ----------
 
 # DBTITLE 1,Aplicar SCD2 em _agents_databases
+# ------------------------------------------------------------------------------
+# RÉPLICA SCD2 - TABELA _AGENTS_DATABASES
+# ------------------------------------------------------------------------------
+# Aplica o mesmo processo SCD2 na réplica usada por agentes de IA,
+# garantindo consistência entre as duas tabelas de destino.
+# ------------------------------------------------------------------------------
+
 apply_scd2_merge(AGENTS_TABLE)
 print(f"Carga SCD2 concluída na réplica adicional: {AGENTS_TABLE}")
 
@@ -452,7 +561,14 @@ print(f"Carga SCD2 concluída na réplica adicional: {AGENTS_TABLE}")
 
 # DBTITLE 1,Validar estado da tabela histórica
 # MAGIC %sql
-# MAGIC -- Validação do estado da tabela histórica
+# MAGIC -- ==============================================================================
+# MAGIC -- VALIDAÇÃO DO ESTADO DA TABELA HISTÓRICA
+# MAGIC -- ==============================================================================
+# MAGIC -- Verifica consistência do SCD2: total de versões por chave, contagem de
+# MAGIC -- registros correntes (is_current=true) e datas de início/fim. Espera-se
+# MAGIC -- exatamente 1 versão corrente por chave de negócio.
+# MAGIC -- ==============================================================================
+# MAGIC
 # MAGIC WITH versions AS (
 # MAGIC   SELECT
 # MAGIC     empresa,
@@ -480,9 +596,14 @@ print(f"Carga SCD2 concluída na réplica adicional: {AGENTS_TABLE}")
 # COMMAND ----------
 
 # DBTITLE 1,Comentários e metadados das tabelas
-# =============================================================================
-# 1. DICIONÁRIO COM COMENTÁRIOS DOS CAMPOS
-# =============================================================================
+# ==============================================================================
+# COMENTÁRIOS E METADADOS DAS TABELAS SCD2
+# ==============================================================================
+# Aplica comentários de tabela e colunas, tags de governança (business_key,
+# tracked_change, scd_control) e propriedades de negócio em ambas as
+# tabelas de destino. Garante rastreabilidade e documentação no Unity Catalog.
+# ==============================================================================
+
 TARGET_TABLES = [MAIN_TABLE, AGENTS_TABLE]
 
 COLUMN_COMMENTS = {
@@ -580,7 +701,15 @@ print(f"\nMetadados completos aplicados \u00e0s tabelas SCD2: {TARGET_TABLES}")
 # COMMAND ----------
 
 # DBTITLE 1,Mover arquivos processados para history/
-# Mover arquivos processados de current/ para history/
+# ==============================================================================
+# MOVER ARQUIVOS PROCESSADOS PARA HISTORY/
+# ==============================================================================
+# Move os arquivos Excel processados de current/ para history/ após o
+# sucesso do SCD2. Valida que current/ ficou vazio ao final.
+# Em caso de falha na movimentação, levanta RuntimeError para evitar
+# reprocessamento na próxima execução.
+# ==============================================================================
+
 HISTORY_PATH = "/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/history/"
 
 moved = []

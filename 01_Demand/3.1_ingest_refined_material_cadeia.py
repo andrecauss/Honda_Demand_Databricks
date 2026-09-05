@@ -3,30 +3,6 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
-# DBTITLE 1,Propósito do Notebook
-# MAGIC %md
-# MAGIC # Cadeia de Substituição de Materiais
-# MAGIC
-# MAGIC **Camada**: Refined  
-# MAGIC **Objetivo**: Extrair a relação material <-> item principal da cadeia de substituição a partir da tabela raw `material_cadastrao`, aplicar regras de limpeza de sufixo e persistir na tabela `material_cadeia`.
-# MAGIC
-# MAGIC ## Premissas
-# MAGIC
-# MAGIC * Fonte: `parts_hdbk_sandbox.pr_cadastrao.material_cadastrao` (camada raw)
-# MAGIC * Colunas extraídas: `empresa`, `material`, `item_principal_cadeia`
-# MAGIC * Se `item_principal_cadeia` for NULL, vazio ou "sim", assume o próprio material
-# MAGIC * Limpeza de sufixo no `item_principal_cadeia`:
-# MAGIC   * Empresa 0200: remove " C" (espaço(s) + C) no final
-# MAGIC   * Empresa 0500: remove " C" ou " G" (espaço(s) + C ou G) no final
-# MAGIC * Chave primária composta: `empresa` + `material`
-# MAGIC
-# MAGIC ## Fonte e Destino
-# MAGIC
-# MAGIC **Fonte**: `parts_hdbk_sandbox.pr_cadastrao.material_cadastrao`  
-# MAGIC **Destino**: `parts_hdbk_sandbox.pr_cadastrao.material_cadeia`
-
-# COMMAND ----------
-
 # DBTITLE 1,Imports e Função de Limpeza de Sufixo
 from pyspark.sql import functions as F
 
