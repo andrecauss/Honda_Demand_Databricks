@@ -3,6 +3,19 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # 5.1 — Apuração da demanda
+# MAGIC
+# MAGIC - **Propósito:** Consolidar a demanda histórica em visões para planejamento e exportação.
+# MAGIC - **Entradas:** `dt_sales_orders.raw_sales_order`, `material_cadeia`, `knvv_sap` e `kna1_sap`
+# MAGIC - **Saídas:** Tabelas `pr_demand.refined_demand_*`
+# MAGIC - **Granularidade:** Varia por visão · **Carga:** Completa, mensal
+
+# COMMAND ----------
+
 # DBTITLE 1,⚙️ Parâmetros Configuráveis
 # ==============================================================================
 # PARÂMETROS CONFIGURÁVEIS
@@ -51,20 +64,20 @@ if data_max:
         data_referencia = datetime.strptime(data_max, "%Y-%m-%d")
     else:
         data_referencia = data_max
-    
+
     ano = data_referencia.year
     mes = data_referencia.month
-    
+
     # Calcula data_minima: primeiro dia do mês que inicia a janela de JANELA_MESES fechados
     # Ex: se último mês é junho/2026 e JANELA_MESES=24, então julho/2024 até junho/2026
     data_minima_dt = data_referencia - relativedelta(months=JANELA_MESES - 1)
     # Pega o primeiro dia do mês resultante
     data_minima_dt = data_minima_dt.replace(day=1)
     data_minima = data_minima_dt.strftime("%Y-%m-%d")
-    
+
     # Define como variável Python para uso em células SQL via substituição
     # (spark.conf.set só aceita chaves pré-definidas do Spark)
-    
+
     # Mesma lógica acima, aplicada à janela reduzida de ZPUG por Cliente
     data_minima_zpug_dt = data_referencia - relativedelta(months=JANELA_MESES_ZPUG_CLI - 1)
     data_minima_zpug_dt = data_minima_zpug_dt.replace(day=1)
@@ -95,7 +108,7 @@ else:
 # ==============================================================================
 
 # Usa f-string Python para garantir interpolação correta do parâmetro data_minima
-spark.sql(f"""  
+spark.sql(f"""
 CREATE OR REPLACE TEMP VIEW vw_sales_orders AS
 SELECT
   rso.numero_ov,
@@ -105,7 +118,7 @@ SELECT
   rso.canal_dist,
   rso.emissor_da_ordem,
   rso.centro,
-  rso.material,  
+  rso.material,
   rso.quantidade,
   COALESCE(mc.item_principal_cadeia, rso.material) AS item_principal_cadeia,
   k.cen AS centro_original,
@@ -160,14 +173,14 @@ df = spark.table("vw_sales_orders")
 def _nome_arquivo(org_vendas, sufixo):
     """
     Gera nome padronizado de arquivo de exportação.
-    
+
     Args:
         org_vendas (str): Código da organização de vendas ('0200' ou '0500')
         sufixo (str): Tipo de demanda (ex: 'Demanda Fechada', 'Demanda Aberta')
-    
+
     Returns:
         str: Nome formatado (ex: 'HDA 2026 Jul Demanda Fechada')
-    
+
     Example:
         >>> _nome_arquivo('0200', 'Demanda Fechada')
         'HDA 2026 Jul Demanda Fechada'
@@ -180,18 +193,18 @@ def _nome_arquivo(org_vendas, sufixo):
 def _pivot(df_filtrado, colunas_grupo, operacao="soma"):
     """
     Aplica pivoteamento temporal com agregação por período (yyyy/MM).
-    
+
     Transforma linhas de transações em colunas mensais, permitindo análise
     de tendência ao longo do tempo. Cada coluna representa um mês/ano.
-    
+
     Args:
         df_filtrado (DataFrame): DataFrame pré-filtrado com dados de vendas
         colunas_grupo (list): Colunas de agrupamento (ex: ['item_principal_cadeia'])
         operacao (str): Tipo de agregação - 'soma' (sum) ou 'contagem' (count)
-    
+
     Returns:
         DataFrame: DataFrame pivoteado com colunas yyyy/MM e valores INTEGER
-    
+
     Example:
         >>> df_pivot = _pivot(df, ['material'], operacao='soma')
         >>> # Resultado: | material | 2024/01 | 2024/02 | 2024/03 | ...
@@ -201,13 +214,13 @@ def _pivot(df_filtrado, colunas_grupo, operacao="soma"):
         df_pivot = df_fmt.groupBy(colunas_grupo).pivot("data_aaaa_mm").agg({"quantidade": "sum"})
     else:
         df_pivot = df_fmt.groupBy(colunas_grupo).pivot("data_aaaa_mm").agg({"quantidade": "count"})
-    
+
     # Converte todas as colunas de data (yyyy/MM) para INT
     df_pivot = df_pivot.fillna(0)
     for col_name in df_pivot.columns:
         if col_name not in colunas_grupo:
             df_pivot = df_pivot.withColumn(col_name, df_pivot[col_name].cast("int"))
-    
+
     return df_pivot
 
 
@@ -228,12 +241,12 @@ TABELAS_BASE = [
 def _limpar_tabelas():
     """
     Remove todas as tabelas refinadas existentes para recriação limpa.
-    
+
     Garante que cada execução do notebook parta de um estado limpo,
     evitando dados duplicados ou inconsistências de schema. Busca e remove
     automaticamente todas as tabelas cujos nomes começam com os prefixos
     definidos em TABELAS_BASE.
-    
+
     Side Effects:
         - Dropa tabelas Delta no schema parts_hdbk_sandbox.pr_demand
         - Exibe mensagens de progresso no console
@@ -252,15 +265,15 @@ def _limpar_tabelas():
 def _append(df_resultado, tabela):
     """
     Persiste DataFrame em tabela Delta com suporte a evolução de schema.
-    
+
     Cria a tabela se não existir (com column mapping habilitado) ou
     adiciona linhas via append se já existir. Column mapping permite
     renomeação de colunas sem reescrita de dados.
-    
+
     Args:
         df_resultado (DataFrame): DataFrame a ser persistido
         tabela (str): Nome da tabela (sem schema, ex: 'refined_demand_fechada_HDA')
-    
+
     Side Effects:
         - Cria ou atualiza tabela Delta em parts_hdbk_sandbox.pr_demand
         - Exibe contagem de linhas no console
@@ -282,14 +295,14 @@ def _append(df_resultado, tabela):
 def _reordenar(df_resultado, cols_id):
     """
     Reordena colunas do DataFrame para layout padronizado de exportação.
-    
+
     Garante que as colunas fixas (file, sheet, identificadores de negócio)
     aparecem primeiro, seguidas pelas colunas temporais em ordem cronológica.
-    
+
     Args:
         df_resultado (DataFrame): DataFrame pivoteado a ser reordenado
         cols_id (list): Colunas de identificação (ex: ['Item Principal Cadeia'])
-    
+
     Returns:
         DataFrame: DataFrame com colunas ordenadas (file, sheet, IDs, datas)
     """
@@ -366,7 +379,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
-    
+
     tabela_completa = "refined_demand_fechada_HDA"
     _append(df_pivot, tabela_completa)
 
@@ -395,7 +408,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
-    
+
     tabela_completa = "refined_demand_fechada_sem_zesp_HDA"
     _append(df_pivot, tabela_completa)
 
@@ -424,7 +437,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("material", "Material")
     df_pivot = _reordenar(df_pivot, ["Material"])
-    
+
     tabela_completa = "refined_demand_aberta_HDA"
     _append(df_pivot, tabela_completa)
 
@@ -453,7 +466,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
-    
+
     tabela_completa = "refined_demand_linha_HDA"
     _append(df_pivot, tabela_completa)
 
@@ -483,7 +496,7 @@ for aba in ABAS_2W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
-    
+
     tabela_completa = "refined_demand_mi_HDA"
     _append(df_pivot, tabela_completa)
 
@@ -552,7 +565,7 @@ _append(df_pivot, tabela_completa)
 # ------------------------------------------------------------------------------
 # HDA - PEDIDO ZPUG
 # ------------------------------------------------------------------------------
-# Agregação: item_principal_cadeia 
+# Agregação: item_principal_cadeia
 # Operação: Soma de quantidades
 # Centros: TTL apenas (ZPUG não é segregado por centro)
 # Filtros: org_vendas='0200' AND tipo_ov='ZPUG'
@@ -649,11 +662,11 @@ def _calc_centro(df_seg, periodo_inicio, periodo_fim):
         .fillna(0)
     )
     cols = sorted([c for c in df_pivot.columns if c != "item_principal_cadeia"])
-    
+
     # Converte colunas de quantidade para INT antes de calcular percentuais
     for c in cols:
         df_pivot = df_pivot.withColumn(c, col(c).cast("int"))
-    
+
     total = reduce(add, [col(c) for c in cols])
     df_pivot = df_pivot.withColumn("_total", total)
     for c in cols:
@@ -679,11 +692,11 @@ def _calc_mercado(df_seg, periodo_inicio, periodo_fim):
         if old_name in df_pivot.columns:
             df_pivot = df_pivot.withColumnRenamed(old_name, new_name)
     cols = sorted([c for c in df_pivot.columns if c != "item_principal_cadeia"])
-    
+
     # Converte colunas de quantidade para INT antes de calcular percentuais
     for c in cols:
         df_pivot = df_pivot.withColumn(c, col(c).cast("int"))
-    
+
     total = reduce(add, [col(c) for c in cols])
     df_pivot = df_pivot.withColumn("_total", total)
     for c in cols:
@@ -775,7 +788,7 @@ for aba in ABAS_4W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
-    
+
     tabela_completa = "refined_demand_fechada_HAB"
     _append(df_pivot, tabela_completa)
 
@@ -804,7 +817,7 @@ for aba in ABAS_4W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
-    
+
     tabela_completa = "refined_demand_fechada_sem_zesp_HAB"
     _append(df_pivot, tabela_completa)
 
@@ -833,7 +846,7 @@ for aba in ABAS_4W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("material", "Material")
     df_pivot = _reordenar(df_pivot, ["Material"])
-    
+
     tabela_completa = "refined_demand_aberta_HAB"
     _append(df_pivot, tabela_completa)
 
@@ -862,7 +875,7 @@ for aba in ABAS_4W:
     df_pivot = df_pivot.withColumn("file", lit(arquivo)).withColumn("sheet", lit(aba))
     df_pivot = df_pivot.withColumnRenamed("item_principal_cadeia", "Item Principal Cadeia")
     df_pivot = _reordenar(df_pivot, ["Item Principal Cadeia"])
-    
+
     tabela_completa = "refined_demand_linha_HAB"
     _append(df_pivot, tabela_completa)
 
@@ -1057,11 +1070,11 @@ def _calc_centro(df_seg, periodo_inicio, periodo_fim):
         .fillna(0)
     )
     cols = sorted([c for c in df_pivot.columns if c != "item_principal_cadeia"])
-    
+
     # Converte colunas de quantidade para INT antes de calcular percentuais
     for c in cols:
         df_pivot = df_pivot.withColumn(c, col(c).cast("int"))
-    
+
     total = reduce(add, [col(c) for c in cols])
     df_pivot = df_pivot.withColumn("_total", total)
     for c in cols:
@@ -1087,11 +1100,11 @@ def _calc_mercado(df_seg, periodo_inicio, periodo_fim):
         if old_name in df_pivot.columns:
             df_pivot = df_pivot.withColumnRenamed(old_name, new_name)
     cols = sorted([c for c in df_pivot.columns if c != "item_principal_cadeia"])
-    
+
     # Converte colunas de quantidade para INT antes de calcular percentuais
     for c in cols:
         df_pivot = df_pivot.withColumn(c, col(c).cast("int"))
-    
+
     total = reduce(add, [col(c) for c in cols])
     df_pivot = df_pivot.withColumn("_total", total)
     for c in cols:
@@ -1164,11 +1177,11 @@ else:
     for row in tabelas:
         nome_tabela = row.tableName
         full_name = f"{SCHEMA}.{nome_tabela}"
-        
+
         # Conta linhas
         try:
             num_linhas = spark.table(full_name).count()
-            
+
             # Extrai segmento (HDA ou HAB)
             if "_HDA_" in nome_tabela:
                 segmento = "HDA (2W)"
@@ -1176,11 +1189,11 @@ else:
                 segmento = "HAB (4W)"
             else:
                 segmento = "Outro"
-            
+
             # Extrai tipo de demanda
             tipo = nome_tabela.replace("refined_demand_", "").split("_HDA_")[0].split("_HAB_")[0]
             tipo = tipo.replace("_", " ").title()
-            
+
             # Extrai centro
             if "_TTL" in nome_tabela:
                 centro = "TTL"
@@ -1196,7 +1209,7 @@ else:
                 centro = "0505"
             else:
                 centro = "-"
-            
+
             dados_tabelas.append({
                 "Segmento": segmento,
                 "Tipo Demanda": tipo,
@@ -1206,33 +1219,33 @@ else:
             })
         except Exception as e:
             print(f"⚠️  Erro ao processar {nome_tabela}: {e}")
-    
+
     # Converte para DataFrame Pandas para exibição formatada
     df_diagnostico = pd.DataFrame(dados_tabelas)
     df_diagnostico = df_diagnostico.sort_values(["Segmento", "Tipo Demanda", "Centro"])
-    
+
     # Exibe por segmento
     for segmento in df_diagnostico["Segmento"].unique():
         print(f"\n{'='*80}")
         print(f"🏍️  {segmento}" if "2W" in segmento else f"🚗  {segmento}")
         print(f"{'='*80}")
-        
+
         df_seg = df_diagnostico[df_diagnostico["Segmento"] == segmento]
-        
+
         for tipo in df_seg["Tipo Demanda"].unique():
             df_tipo = df_seg[df_seg["Tipo Demanda"] == tipo]
             total_linhas = df_tipo["Linhas"].sum()
             num_tabelas = len(df_tipo)
-            
+
             print(f"\n  📋 {tipo}:")
             print(f"     Tabelas: {num_tabelas}")
-            
+
             for _, row in df_tipo.iterrows():
                 print(f"     • {row['Centro']:4s} → {row['Nome Tabela']:60s} ({row['Linhas']:,} linhas)")
-            
+
             print(f"     ─────────────────────────────────────────────────────────────────────")
             print(f"     TOTAL {tipo}: {total_linhas:,} linhas")
-    
+
     # Resumo geral
     print(f"\n{'='*80}")
     print("📊 RESUMO GERAL")

@@ -3,6 +3,19 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # 6.2 — Exportação da demanda para Excel
+# MAGIC
+# MAGIC - **Propósito:** Gerar workbooks Excel com múltiplas abas a partir das tabelas refinadas.
+# MAGIC - **Entrada:** Tabelas `pr_demand.refined_demand_*`
+# MAGIC - **Saída:** Arquivos XLSX no volume de saída do orquestrador
+# MAGIC - **Carga:** Sob demanda
+
+# COMMAND ----------
+
 # DBTITLE 1,Instalação de Dependências
 # ------------------------------------------------------------------------------
 # Instalação de Dependências

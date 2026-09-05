@@ -1,44 +1,11 @@
 # Databricks notebook source
-# DBTITLE 1,Propósito do Notebook
-# ==============================================================================
-# NOTEBOOK METADATA
-# ==============================================================================
-
-import sys
-sys.path.insert(0, "/Workspace/Users/andre_causs@honda.com.br/Honda_Demand_Databricks")
-from utils.notebook_meta import criar_metadata_template, exibir_metadata
-
-NOTEBOOK_META = criar_metadata_template(
-    notebook="2.2 - Ingest Refined Material Stock Snapshot",
-    proposito=(
-        "Captura snapshot mensal de estoques, quantidades e preços de materiais SAP "
-        "na camada Refined. Modelo append-only: um registro por chave de negócio "
-        "por mês, sem overwrite de dados existentes."
-    ),
-    inputs=["/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/"],
-    outputs=["parts_hdbk_sandbox.pr_cadastrao.material_inventory_history"],
-)
-NOTEBOOK_META["transformacoes"] = [
-    "Sanitização de nomes de colunas (remoção de acentos/especiais)",
-    "Conversão de tipos (INT para estoques, FLOAT para preços)",
-    "Cálculo de stock_total (soma de 5 tipos de estoque físico)",
-    "Extração de reference_date do nome do arquivo",
-    "Proteção contra duplicatas por reference_date",
-]
-NOTEBOOK_META["dimensoes"] = {
-    "chave": "empresa + material + centro + reference_date",
-    "granularidade": "Um snapshot por material/centro/mês",
-    "metricas": "estoques (7 tipos), preço líquido, stock_total",
-}
-NOTEBOOK_META["dependencias"] = ["pyspark.sql.functions", "re", "unicodedata", "os", "uuid", "datetime"]
-NOTEBOOK_META["convencoes"] = [
-    "reference_date extraída do padrão CAD{centro}_{yyyy}.{MM}.xlsx",
-    "stock_total = livre + bloqueado + trânsito + terceiros + qualidade",
-    "Este notebook NÃO move arquivos para history/ (responsabilidade do 2.3)",
-]
-NOTEBOOK_META["execucao"] = "Executar sequencialmente. Encerra automaticamente se não houver arquivos."
-
-exibir_metadata(NOTEBOOK_META)
+# MAGIC %md
+# MAGIC # 2.2 — Snapshot de estoque de materiais
+# MAGIC
+# MAGIC - **Propósito:** Registrar mensalmente estoques, quantidades e preços dos materiais.
+# MAGIC - **Entrada:** `pr_cadastrao/sap_cadastraorefinado/current`
+# MAGIC - **Saída:** `pr_cadastrao.material_inventory_history`
+# MAGIC - **Chave:** Empresa + Material + Centro + Data de referência · **Carga:** Mensal, append-only
 
 # COMMAND ----------
 
