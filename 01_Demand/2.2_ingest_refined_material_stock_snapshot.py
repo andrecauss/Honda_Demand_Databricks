@@ -5,7 +5,7 @@
 # MAGIC - **Propósito:** Registrar mensalmente estoques, quantidades e preços dos materiais.
 # MAGIC - **Entrada:** `pr_cadastrao/sap_cadastraorefinado/current`
 # MAGIC - **Saída:** `pr_cadastrao.material_inventory_history`
-# MAGIC - **Chave:** Empresa + Material + Centro + Data de referência · **Carga:** Mensal, append-only
+# MAGIC - **Chave:** Empresa + Material + Centro + Data de referência · **Carga:** Mensal, substituição atômica do mês
 
 # COMMAND ----------
 
@@ -88,7 +88,7 @@ df_raw = (spark.read
     .load("/Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/")
 )
 
-print(f"Arquivos carregados: {len(df_raw.columns)} colunas, {df_raw.count()} linhas")
+print(f"Arquivos carregados: {len(df_raw.columns)} colunas")
 
 source_file_names = [
     row.file_name
@@ -147,7 +147,7 @@ else:
 
     df = df_raw.toDF(*sanitized_names)
 
-print(f"DataFrame final: {df.count()} linhas, {len(df.columns)} colunas")
+print(f"DataFrame preparado: {len(df.columns)} colunas")
 
 # COMMAND ----------
 
@@ -155,9 +155,9 @@ print(f"DataFrame final: {df.count()} linhas, {len(df.columns)} colunas")
 # ==============================================================================
 # SNAPSHOT MENSAL DE INVENTÁRIO
 # ==============================================================================
-# Agregação: empresa + material + centro (dedup por chave)
-# Operação: Conversão de tipos, cálculo de stock_total, INSERT append-only
-# Filtros: Proteção contra duplicatas por reference_date já existente
+# Agregação: empresa + material + centro (duplicatas idênticas são consolidadas)
+# Operação: conversão de tipos, cálculo de stock_total e substituição atômica do mês
+# Proteções: chaves obrigatórias, conflito por chave e validação numérica
 # Saída: parts_hdbk_sandbox.pr_cadastrao.material_inventory_history
 # Nota: reference_date extraída do padrão CAD{centro}_{yyyy}.{MM}.xlsx
 # ==============================================================================
@@ -212,18 +212,148 @@ INTEGER_COLUMNS = [
     "quantidade_em_pi", "quantidade_em_bo",
 ]
 FLOAT_COLUMNS = ["preco_de_rede_price_de_venda_liquida"]
+BUSINESS_KEY_COLUMNS = ["empresa", "material", "centro"]
 
-inventory_df = df.select(*INVENTORY_COLUMNS).dropDuplicates(["empresa", "material", "centro"])
+inventory_source_df = df.select(*INVENTORY_COLUMNS)
 
-int_exprs = {
-    c: F.regexp_replace(F.col(c), r"[^\d\-]", "").cast("int")
-    for c in INTEGER_COLUMNS
+# Chaves nulas ou vazias nunca devem entrar no histórico. Além de impedir uma
+# identificação confiável, valores nulos não se comportam como iguais em joins.
+invalid_key_condition = None
+for key_column in BUSINESS_KEY_COLUMNS:
+    current_condition = F.col(key_column).isNull() | (F.trim(F.col(key_column)) == "")
+    invalid_key_condition = (
+        current_condition
+        if invalid_key_condition is None
+        else invalid_key_condition | current_condition
+    )
+
+invalid_key_rows = (
+    inventory_source_df
+    .filter(invalid_key_condition)
+    .select(*BUSINESS_KEY_COLUMNS)
+    .limit(10)
+    .collect()
+)
+if invalid_key_rows:
+    raise ValueError(
+        "A carga contém registros com empresa, material ou centro nulo/vazio. "
+        f"Amostra: {[row.asDict() for row in invalid_key_rows]}"
+    )
+
+
+def normalize_decimal_string(column_name: str):
+    """Normaliza formatos numéricos usuais sem remover o separador decimal."""
+    raw_value = F.regexp_replace(
+        F.trim(F.col(column_name).cast("string")),
+        r"[\s\u00A0R$]",
+        "",
+    )
+
+    return (
+        F.when(raw_value.isNull() | (raw_value == ""), F.lit(None).cast("string"))
+        # Formato brasileiro com milhar e decimal: 1.234,56
+        .when(
+            raw_value.rlike(r"^-?\d{1,3}(\.\d{3})+,\d+$"),
+            F.regexp_replace(F.regexp_replace(raw_value, r"\.", ""), ",", "."),
+        )
+        # Formato internacional com milhar e decimal: 1,234.56
+        .when(
+            raw_value.rlike(r"^-?\d{1,3}(,\d{3})+\.\d+$"),
+            F.regexp_replace(raw_value, ",", ""),
+        )
+        # Vírgula como separador decimal: 1234,56
+        .when(raw_value.rlike(r"^-?\d+,\d+$"), F.regexp_replace(raw_value, ",", "."))
+        # Número inteiro ou com ponto decimal: 1234 ou 1234.56
+        .when(raw_value.rlike(r"^-?\d+(\.\d+)?$"), raw_value)
+        .otherwise(F.lit(None).cast("string"))
+    )
+
+
+parsed_columns = {
+    f"__parsed_{column_name}": normalize_decimal_string(column_name).cast("decimal(38,6)")
+    for column_name in INTEGER_COLUMNS + FLOAT_COLUMNS
 }
-float_exprs = {
-    c: F.regexp_replace(F.regexp_replace(F.col(c), r"\.", ""), ",", ".").cast("float")
-    for c in FLOAT_COLUMNS
-}
-inventory_df = inventory_df.withColumns({**int_exprs, **float_exprs})
+parsed_df = inventory_source_df.withColumns(parsed_columns)
+
+# Falha explicitamente em vez de transformar silenciosamente conteúdo inválido
+# em NULL ou truncar quantidades fracionárias/fora do intervalo de INT.
+invalid_numeric_condition = None
+for column_name in INTEGER_COLUMNS:
+    original = F.trim(F.col(column_name).cast("string"))
+    parsed = F.col(f"__parsed_{column_name}")
+    current_condition = (
+        (original.isNotNull() & (original != "") & parsed.isNull())
+        | (parsed.isNotNull() & (parsed != F.floor(parsed)))
+        | (parsed < F.lit(-2147483648))
+        | (parsed > F.lit(2147483647))
+    )
+    invalid_numeric_condition = (
+        current_condition
+        if invalid_numeric_condition is None
+        else invalid_numeric_condition | current_condition
+    )
+
+for column_name in FLOAT_COLUMNS:
+    original = F.trim(F.col(column_name).cast("string"))
+    parsed = F.col(f"__parsed_{column_name}")
+    current_condition = original.isNotNull() & (original != "") & parsed.isNull()
+    invalid_numeric_condition = invalid_numeric_condition | current_condition
+
+invalid_numeric_rows = (
+    parsed_df
+    .filter(invalid_numeric_condition)
+    .select(*BUSINESS_KEY_COLUMNS, *INTEGER_COLUMNS, *FLOAT_COLUMNS)
+    .limit(10)
+    .collect()
+)
+if invalid_numeric_rows:
+    raise ValueError(
+        "A carga contém quantidades ou preços em formato inválido. "
+        f"Amostra: {[row.asDict() for row in invalid_numeric_rows]}"
+    )
+
+normalized_df = parsed_df.withColumns({
+    **{
+        column_name: F.col(f"__parsed_{column_name}").cast("int")
+        for column_name in INTEGER_COLUMNS
+    },
+    **{
+        # Mantém FLOAT por compatibilidade com a tabela histórica existente.
+        # Uma futura migração controlada poderá promover preços para DECIMAL(18,2).
+        column_name: F.col(f"__parsed_{column_name}").cast("float")
+        for column_name in FLOAT_COLUMNS
+    },
+}).drop(*parsed_columns.keys())
+
+# Duplicatas idênticas são aceitáveis; duas versões diferentes para a mesma
+# chave no mesmo snapshot são ambíguas e interrompem a carga.
+payload_columns = [c for c in INVENTORY_COLUMNS if c not in BUSINESS_KEY_COLUMNS]
+conflicting_keys = (
+    normalized_df
+    .withColumn(
+        "__payload_hash",
+        F.sha2(
+            F.to_json(
+                F.struct(*[F.col(c) for c in payload_columns]),
+                {"ignoreNullFields": "false"},
+            ),
+            256,
+        ),
+    )
+    .groupBy(*BUSINESS_KEY_COLUMNS)
+    .agg(F.countDistinct("__payload_hash").alias("payload_versions"))
+    .filter(F.col("payload_versions") > 1)
+    .limit(10)
+    .collect()
+)
+if conflicting_keys:
+    raise ValueError(
+        "A carga contém valores divergentes para a mesma combinação "
+        "empresa + material + centro. "
+        f"Amostra: {[row.asDict() for row in conflicting_keys]}"
+    )
+
+inventory_df = normalized_df.dropDuplicates(BUSINESS_KEY_COLUMNS)
 
 STOCK_TOTAL_COLUMNS = [
     "estoque_livre_no_centro", "estoque_bloqueado",
@@ -239,6 +369,18 @@ inventory_df = inventory_df.withColumns({
     "_load_id": F.lit(LOAD_ID),
     "_source_file_path": F.lit(SOURCE_PATH),
 })
+
+TARGET_COLUMNS = [
+    "centro", "material", "empresa",
+    *INTEGER_COLUMNS,
+    *FLOAT_COLUMNS,
+    "stock_total", "reference_date",
+    "_ingested_at", "_ingested_by", "_load_id", "_source_file_path",
+]
+inventory_df = inventory_df.select(*TARGET_COLUMNS)
+
+if not inventory_df.limit(1).collect():
+    raise ValueError("O snapshot de inventário está vazio; nenhuma tabela foi alterada.")
 
 spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {INVENTORY_TABLE} (
@@ -256,24 +398,26 @@ spark.sql(f"""
     ) USING DELTA
 """)
 
-existing_count = spark.sql(f"""
-    SELECT COUNT(*) AS total FROM {INVENTORY_TABLE}
-    WHERE reference_date = DATE '{REFERENCE_DATE.strftime("%Y-%m-%d")}'
-""").first()["total"]
+# A substituição com replaceWhere é uma única transação Delta: uma falha não
+# deixa o mês parcialmente gravado. A mesma operação também permite corrigir e
+# reprocessar um snapshot mensal sem duplicar registros.
+reference_date_sql = REFERENCE_DATE.strftime("%Y-%m-%d")
+(
+    inventory_df.write
+    .format("delta")
+    .mode("overwrite")
+    .option("replaceWhere", f"reference_date = '{reference_date_sql}'")
+    .saveAsTable(INVENTORY_TABLE)
+)
 
-if existing_count > 0:
-    print(f"Já existem {existing_count} registros para {REFERENCE_DATE.strftime('%Y-%m-%d')}. Pulando inserção.")
-else:
-    inventory_df.createOrReplaceTempView("vw_inventory_stage")
-    spark.sql(f"INSERT INTO {INVENTORY_TABLE} SELECT * FROM vw_inventory_stage")
+written_count = (
+    spark.table(INVENTORY_TABLE)
+    .filter(F.col("reference_date") == F.lit(REFERENCE_DATE.date()))
+    .count()
+)
 
-    inserted = inventory_df.count()
-    total = spark.sql(f"SELECT COUNT(*) AS total FROM {INVENTORY_TABLE}").first()["total"]
-    months = spark.sql(f"SELECT COUNT(DISTINCT reference_date) AS months FROM {INVENTORY_TABLE}").first()["months"]
-
-    print(f"Tabela: {INVENTORY_TABLE}")
-    print(f"Registros inseridos para {REFERENCE_DATE.strftime('%Y-%m-%d')}: {inserted}")
-    print(f"Total acumulado: {total} registros em {months} mês(es)")
+print(f"Tabela: {INVENTORY_TABLE}")
+print(f"Snapshot de {reference_date_sql} substituído atomicamente: {written_count} registros")
 
 # COMMAND ----------
 
@@ -289,7 +433,7 @@ else:
 INVENTORY_COMMENT = """
 Snapshot mensal de estoques e preços de materiais SAP.
 
-Modelo: Append-only (um registro por chave de negócio por mês)
+Modelo: Snapshot mensal substituível por data de referência
 Chave: empresa + material + centro + reference_date
 Fonte: /Volumes/parts_hdbk_sandbox/pr_cadastrao/sap_cadastraorefinado/current/
 """
@@ -317,29 +461,45 @@ INVENTORY_COLUMN_COMMENTS = {
     "_source_file_path": "Caminho do diretório fonte dos arquivos ingeridos.",
 }
 
-spark.sql(f"COMMENT ON TABLE {INVENTORY_TABLE} IS '{INVENTORY_COMMENT.replace(chr(39), chr(39)+chr(39))}'")
+METADATA_VERSION = "1"
+table_properties = (
+    spark.sql(f"DESCRIBE DETAIL {INVENTORY_TABLE}")
+    .select("properties")
+    .first()["properties"]
+    or {}
+)
+current_metadata_version = table_properties.get("inventory_metadata_version")
 
-for col_name, comment in INVENTORY_COLUMN_COMMENTS.items():
-    escaped = comment.replace("'", "''")
-    spark.sql(f"COMMENT ON COLUMN {INVENTORY_TABLE}.{col_name} IS '{escaped}'")
-
-spark.sql(f"""
-    ALTER TABLE {INVENTORY_TABLE} SET TAGS (
-        'domain' = 'materials', 'layer' = 'refined',
-        'source' = 'sap', 'history_model' = 'monthly_snapshot',
-        'data_classification' = 'internal'
+if current_metadata_version != METADATA_VERSION:
+    spark.sql(
+        f"COMMENT ON TABLE {INVENTORY_TABLE} IS "
+        f"'{INVENTORY_COMMENT.replace(chr(39), chr(39) + chr(39))}'"
     )
-""")
 
-spark.sql(f"""
-    ALTER TABLE {INVENTORY_TABLE} SET TBLPROPERTIES (
-        'business_owner' = 'Demand Planning',
-        'technical_owner' = 'Andre Causs',
-        'data_domain' = 'Materials Inventory',
-        'source_system' = 'SAP',
-        'refresh_frequency' = 'monthly_append',
-        'natural_key' = 'empresa, material, centro, reference_date'
-    )
-""")
+    for col_name, comment in INVENTORY_COLUMN_COMMENTS.items():
+        escaped = comment.replace("'", "''")
+        spark.sql(f"COMMENT ON COLUMN {INVENTORY_TABLE}.{col_name} IS '{escaped}'")
 
-print(f"Metadados aplicados \u00e0 tabela {INVENTORY_TABLE}")
+    spark.sql(f"""
+        ALTER TABLE {INVENTORY_TABLE} SET TAGS (
+            'domain' = 'materials', 'layer' = 'refined',
+            'source' = 'sap', 'history_model' = 'monthly_snapshot',
+            'data_classification' = 'internal'
+        )
+    """)
+
+    spark.sql(f"""
+        ALTER TABLE {INVENTORY_TABLE} SET TBLPROPERTIES (
+            'business_owner' = 'Demand Planning',
+            'technical_owner' = 'Andre Causs',
+            'data_domain' = 'Materials Inventory',
+            'source_system' = 'SAP',
+            'refresh_frequency' = 'monthly_replace',
+            'natural_key' = 'empresa, material, centro, reference_date',
+            'inventory_metadata_version' = '{METADATA_VERSION}'
+        )
+    """)
+
+    print(f"Metadados versão {METADATA_VERSION} aplicados à tabela {INVENTORY_TABLE}")
+else:
+    print(f"Metadados versão {METADATA_VERSION} já aplicados; DDL de governança ignorada.")
